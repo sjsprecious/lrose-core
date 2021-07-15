@@ -644,8 +644,7 @@ def writeCMakeListsTop(dir):
     fo.write('set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)\n')
     fo.write('\n')
     fo.write('if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")\n')
-    linker_flags = "-Wl,--enable-new-dtags -L"+options.prefix+"/lib"
-    fo.write('  set(CMAKE_EXE_LINKER_FLAGS linker_flags)\n')
+    fo.write('  set(CMAKE_EXE_LINKER_FLAGS "-Wl,--enable-new-dtags")\n')
     fo.write('endif()\n')
     fo.write('\n')
 
