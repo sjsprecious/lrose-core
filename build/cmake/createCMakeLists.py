@@ -644,7 +644,7 @@ def writeCMakeListsTop(dir):
     fo.write('set(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)\n')
     fo.write('\n')
     fo.write('if(${CMAKE_SYSTEM_NAME} MATCHES "Linux")\n')
-    fo.write('  set(CMAKE_EXE_LINKER_FLAGS "-Wl,--enable-new-dtags -L'+options.prefix+'/lib")\n')
+    fo.write('  set(CMAKE_EXE_LINKER_FLAGS "-Wl,--enable-new-dtags -L'+options.prefix+'/lib -L/cm/shared/apps/fftw/openmpi/gcc/64/3.3.8/lib")\n')
     fo.write('endif()\n')
     fo.write('\n')
 
