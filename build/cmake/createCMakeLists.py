@@ -620,7 +620,7 @@ def writeCMakeListsTop(dir):
         fo.write('set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC ")\n')
 
     if (options.iscray):
-        fo.write('set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -hstd=c++11 -O3 -h omp,aggress,flex_mp=tolerant,vector3 ")\n')
+        fo.write('set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -hstd=c++11 ")\n')
     elif (options.isfujitsu):
         fo.write('set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -std=c++11 -D__fujitsu__ ")\n')        
     else:
