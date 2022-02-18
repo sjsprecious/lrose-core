@@ -40,6 +40,7 @@ CPPC_SRCS = \
         OneBoundary.cc \
         BoundaryPointManagement.cc \
         BoundaryPointMap.cc \
+	Boundary.cc \
         SoloFunctionsApi.cc \
 	Despeckle.cc \
 	FlagOps.cc \
@@ -49,6 +50,7 @@ CPPC_SRCS = \
 	ThresholdField.cc \
 	ForcedUnfolding.cc \
 	MergeFields.cc \
+	NavigationCorrection.cc \
 	RemoveRing.cc \
 	RainRate.cc \
 	Abs.cc \

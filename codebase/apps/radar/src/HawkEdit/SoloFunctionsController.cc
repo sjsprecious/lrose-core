@@ -16,9 +16,16 @@
 using namespace std;
 
 SoloFunctionsController::SoloFunctionsController(QObject *parent) : QObject(parent) {
+  reset();
+}
+
+void SoloFunctionsController::reset() {
   DataModel *dataModel = DataModel::Instance();
+
   _nRays = dataModel->getNRays();
-  _nSweeps = dataModel->getNSweeps();
+  if (_nRays > 0) {
+    _nSweeps = dataModel->getNSweeps();
+  }
 }
 
 
@@ -574,6 +581,20 @@ QString SoloFunctionsController::THRESHOLD_BELOW(QString field,
 
                 return QString::fromStdString(tempFieldName);
 } 
+
+// return the name of the field in which the result is stored in the RadxVol
+QString SoloFunctionsController::UNCONDITIONAL_DELETE(QString field, 
+                  float bad_data_value,
+                  size_t clip_gate) {
+  // last arg is field name, which will be used to create  bad_flag_field returned in tempFieldName
+  string tempFieldName = soloFunctionsModel.UnconditionalDelete(field.toStdString(),
+                     _currentRayIdx, _currentSweepIdx,
+                     clip_gate,
+                     bad_data_value);
+
+                return QString::fromStdString(tempFieldName);
+} 
+
 /*
 // return the name of the field in which the result is stored in the RadxVol
 QString SoloFunctionsController::FLAG_FRECKLES(QString field, float constant, float bad_data,
@@ -602,9 +623,23 @@ void SoloFunctionsController::applyBoundary(bool useBoundaryMask,
 				     useBoundaryMask, boundaryPoints);
 }
 
+
+void SoloFunctionsController::clearBoundary() {
+  soloFunctionsModel.ClearBoundaryMask();
+}
+
 void SoloFunctionsController::setCurrentSweepToFirst() {
   cerr << "entry setCurrentSweepToFirst" << endl;
   _currentSweepIdx = 0;
+  cerr << "exit setCurrentSweepToFirst" << endl;
+
+  //LOG(DEBUG) << "exit";
+
+}
+
+void SoloFunctionsController::setCurrentSweepTo(int sweepIndex) {
+  cerr << "entry setCurrentSweepToFirst" << endl;
+  _currentSweepIdx = (size_t) sweepIndex;
   cerr << "exit setCurrentSweepToFirst" << endl;
 
   //LOG(DEBUG) << "exit";
@@ -622,10 +657,30 @@ void SoloFunctionsController::setCurrentRayToFirst() {
 
 }
 
+// BE CAREFUL!! SweepIndex (int) vs. SweepNumber (int)
+//              size_t vs. int
+void SoloFunctionsController::setCurrentRayToFirstOf(int sweepIndex) {
+  // find the first ray of this sweep
+  // find the last ray of this sweep
+  DataModel *dataModel = DataModel::Instance();
+  //int sweepNumber = dataModel->getSweepNumber(sweepIndex);
+  _currentRayIdx = dataModel->getFirstRayIndex(sweepIndex);
+  _nRays = _currentRayIdx + dataModel->getNRaysSweepIndex(sweepIndex);
+}
+
 void SoloFunctionsController::nextRay() {
   //LOG(DEBUG) << "entry";
-  //cerr << "entry nextRay" << endl;
   _currentRayIdx += 1;
+  if ((_currentRayIdx % 100) == 0) {
+    cerr << "   current ray " << _currentRayIdx << 
+      " current sweep index " << _currentSweepIdx << endl;
+  }
+
+  DataModel *dataModel = DataModel::Instance();
+  size_t lastRayIndex = dataModel->getLastRayIndex(_currentSweepIdx);  
+  if (_currentRayIdx > lastRayIndex) {
+    _currentSweepIdx += 1;
+  } 
   //  applyBoundary();
   //cerr << "exit nextRay" << endl;
   //LOG(DEBUG) << "exit";
@@ -648,9 +703,9 @@ bool SoloFunctionsController::moreRays() {
 }
 
 void SoloFunctionsController::nextSweep() {
-  //LOG(DEBUG) << "entry";
-  //cerr << "entry nextSweep" << endl;
+  //LOG(DEBUG) << "entry" << " _currentSweepIdx = " << _currentSweepIdx;
   _currentSweepIdx += 1;
+  cerr << "current sweep " <<  _currentSweepIdx << endl;
   //cerr << "exit nextSweep" << endl;
   //LOG(DEBUG) << "exit";
 }
@@ -666,38 +721,56 @@ bool SoloFunctionsController::moreSweeps() {
   return (_currentSweepIdx < _nSweeps);
 }
 
+void SoloFunctionsController::regularizeRays() {
+  DataModel *dataModel = DataModel::Instance();
+  dataModel->regularizeRays();  
+}
 
-void SoloFunctionsController::assign(string tempName, string userDefinedName) {
+void SoloFunctionsController::assign(size_t rayIdx, string tempName, string userDefinedName) {
   //_data->loadFieldsFromRays(); // TODO: this is a costly function as it moves the data/or pointers
   // TODO: where are the field names kept? in the table map? can i just change that?
   // Because each RadxRay holds its own FieldNameMap,
   // TODO: maybe ... no longer relavant?
 
   // Let the DataModel handle the changes? the renaming?
+  // But, decide here if this is a rename or a copy 
   DataModel *dataModel = DataModel::Instance();
-  dataModel->renameField(tempName, userDefinedName);
-  /* moved to DataModel::renameField 
-  vector<RadxRay *> rays = dataModel->getRays();
-  // for each ray, 
-  vector<RadxRay *>::iterator it;
-  for (it=rays.begin(); it != rays.end(); ++it) {
-     // renameField(oldName, newName);
-    (*it)->renameField(tempName, userDefinedName);
-    // loadFieldNameMap
-    (*it)->loadFieldNameMap();
 
+  if (dataModel->fieldExists(rayIdx, userDefinedName)) {
+    // copy temp data into existing field data
+    // delete temp field and data
+    dataModel->copyField(rayIdx, tempName, userDefinedName);
+    dataModel->RemoveField(rayIdx, tempName);
+  } else {
+    // rename the temp field 
+    dataModel->renameField(rayIdx, tempName, userDefinedName);
   }
-  */
-  // end for each ray
-  //
-  /* 
-  RadxField *theField = _data->getField(tempName);
-  if (theField == NULL) throw "Error: no field " + tempName + " found for " + userDefinedName + "  in data volume (SoloFunctionsController)";
-  theField->setName(userDefinedName);
-  theField->setLongName(userDefinedName);
-  theField->setStandardName(userDefinedName);
-  _data->loadRaysFromFields();
-  */
+}
+
+void SoloFunctionsController::assignByRay(string tempName, string userDefinedName) {
+  assign(_currentRayIdx, tempName, userDefinedName);
+}
+
+void SoloFunctionsController::assign(string tempName, string userDefinedName) {
+
+  // for each ray ...
+  DataModel *dataModel = DataModel::Instance();
+  size_t nRays = dataModel->getNRays();
+  for (size_t rayIdx=0; rayIdx < nRays; rayIdx++) {
+    assign(rayIdx, tempName, userDefinedName);
+  }
+}
+
+void SoloFunctionsController::assign(string tempName, string userDefinedName,
+  size_t sweepIndex) {
+
+  // for each ray of sweep
+  DataModel *dataModel = DataModel::Instance();
+  size_t firstRayInSweep = dataModel->getFirstRayIndex(sweepIndex);
+  size_t lastRayInSweep = dataModel->getLastRayIndex(sweepIndex);
+  for (size_t rayIdx=firstRayInSweep; rayIdx < lastRayInSweep; rayIdx++) {
+    assign(rayIdx, tempName, userDefinedName);
+  }
 }
 
 // Return data for the field, at the current sweep and ray indexes.
@@ -712,7 +785,7 @@ const vector<float> *SoloFunctionsController::getData(string &fieldName) {
 void SoloFunctionsController::setData(string &fieldName, vector<float> *fieldData) {
         //soloFunctionsModel.SetData(fieldName, _data, _currentRayIdx, _currentSweepIdx, fieldData); 
   DataModel *dataModel = DataModel::Instance();
-  dataModel->SetData(fieldName, _currentRayIdx, _currentSweepIdx, fieldData); 
+  dataModel->SetDataByIndex(fieldName, _currentRayIdx, _currentSweepIdx, fieldData); 
 }
 
 /*

@@ -620,13 +620,13 @@ public:
   // by copying from closest available vlevel.
   // dz is computed as the smallest suitable delta z.
   
-  void setDzConstant(int nzMax = 64);
+  void setDzConstant(int nzMax = MDV32_MAX_VLEVELS);
 
   // Set dz, difference between vlevels, to be constant
   // If not already constant, data is remapped onto constant vlevels
   // by copying from closest available vlevel.
   
-  void setDzConstant(double dz, int nzMax = 64);
+  void setDzConstant(double dz, int nzMax = MDV32_MAX_VLEVELS);
 
   // remap vertical levels, using a constant dz.
   // If not already constant, data is remapped onto constant vlevels
@@ -751,7 +751,7 @@ public:
                        Mdvx::field_header_t &fhdr);
   static void setTransform(const string &transform, Mdvx::field_header_t &fhdr);
 
-// setting the volume data
+  // setting the volume data
   //
   // The data must be uncompressed.
   // Scaling type, scale and bias only apply to INT8 and INT16 encoding.

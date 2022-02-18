@@ -258,6 +258,9 @@ const float *data, float *newData, size_t nGates,
 			   size_t clip_gate,
 			   float bad_data_value,
 			   string newFieldName);
+
+  string UnconditionalDelete(string fieldName,  int rayIdx, int sweepIdx,
+             size_t clip_gate, float bad_data_value);
   
   /*
 const float *data, float *newData, size_t nGates,
@@ -271,7 +274,7 @@ const float *data, float *newData, size_t nGates,
 			 float bad_data_value, size_t dgi_clip_gate, bool *boundary_mask);
   */
 
-
+  void ClearBoundaryMask();
   void SetBoundaryMask(int rayIdx, int sweepIdx, bool useBoundaryMask,
   	vector<Point> &boundaryPoints);
   void SetBoundaryMaskOriginal(int rayIdx, int sweepIdx, vector<Point> &boundaryPoints);

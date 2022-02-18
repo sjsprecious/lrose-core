@@ -70,7 +70,9 @@ SRCS = \
 	zero_clump.c
 
 CPPC_SRCS = \
-	GridClumping.cc
+	ClumpingDualThresh.cc \
+	ClumpingMgr.cc \
+	ClumpProps.cc
 
 #
 # general targets

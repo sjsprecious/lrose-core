@@ -10,6 +10,8 @@
 #include <QGridLayout>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QMessageBox>
+#include <QColorDialog>
 
 
 /*
@@ -87,6 +89,16 @@ BoundaryPointEditorView::BoundaryPointEditorView(QWidget *parent)
   connect(_boundaryEditorPolygonBtn, SIGNAL(clicked()),
    this, SLOT(polygonBtnBoundaryEditorClick()));
 
+  //boundaryColorLabel = new QLabel;
+  //boundaryColorLabel->setText(tr("Boundary"));
+  boundaryColorButton = new QPushButton(tr(""));
+  boundaryColorButton->setFlat(true);
+  boundaryColorButton->setAutoDefault(false);
+  setColorOnButton(boundaryColorButton, QColor("blue"));
+  _boundaryEditorDialogLayout->addWidget(boundaryColorButton, row, 1);
+  connect(boundaryColorButton, SIGNAL(clicked()), 
+    this, SLOT(setBoundaryColor()));
+
   _boundaryEditorCircleBtn = new QPushButton(this); // _boundaryEditorDialog);
   _boundaryEditorCircleBtn->setMaximumWidth(130);
   _boundaryEditorCircleBtn->setText(" Circle  ");
@@ -95,7 +107,8 @@ BoundaryPointEditorView::BoundaryPointEditorView(QWidget *parent)
   _boundaryEditorCircleBtn->setFocusPolicy(Qt::NoFocus);
   _boundaryEditorDialogLayout->addWidget(_boundaryEditorCircleBtn, ++row, 0);
   connect(_boundaryEditorCircleBtn, SIGNAL(clicked()),
-   this, SLOT(circleBtnBoundaryEditorClick()));
+   this, SLOT(notImplementedMessage()));
+   // this, SLOT(circleBtnBoundaryEditorClick()));
 
   _circleRadiusSlider = new QSlider(Qt::Horizontal);
   _circleRadiusSlider->setFocusPolicy(Qt::StrongFocus);
@@ -120,7 +133,8 @@ BoundaryPointEditorView::BoundaryPointEditorView(QWidget *parent)
   _boundaryEditorBrushBtn->setFocusPolicy(Qt::NoFocus);
   _boundaryEditorDialogLayout->addWidget(_boundaryEditorBrushBtn, ++row, 0);
   connect(_boundaryEditorBrushBtn, SIGNAL(clicked()),
-   this, SLOT(brushBtnBoundaryEditorClick()));
+   this, SLOT(notImplementedMessage()));
+   //this, SLOT(brushBtnBoundaryEditorClick()));
 
   _brushRadiusSlider = new QSlider(Qt::Horizontal);
   _brushRadiusSlider->setFocusPolicy(Qt::StrongFocus);
@@ -137,7 +151,7 @@ BoundaryPointEditorView::BoundaryPointEditorView(QWidget *parent)
   connect(_brushRadiusSlider, SIGNAL(valueChanged(int)),
    this, SLOT(_brushRadiusSliderValueChanged(int)));
 
-  _boundaryEditorBrushBtn->setChecked(true);
+  //_boundaryEditorPolygonBtn->setChecked(true);
   _boundaryEditorDialogLayout->addWidget(new QLabel(" ", this)); // _boundaryEditorDialog), ++row, 0, 1, 2, alignCenter);
 
   _boundaryEditorList = new QListWidget(this); // _boundaryEditorDialog);
@@ -182,6 +196,14 @@ BoundaryPointEditorView::BoundaryPointEditorView(QWidget *parent)
   connect(_boundaryEditorSaveBtn, SIGNAL(clicked()),
    this, SLOT(saveBoundaryEditorClick()));
 
+/*
+TODO: need a signal or call back to View, that boundary was saved successfully
+  statusBar = new QStatusBar(this);
+  _boundaryEditorDialogLayout->addWidget(statusBar, ++row, 0);
+  statusBar->showMessage(tr("Ready"));
+
+*/
+
 }
 
 void BoundaryPointEditorView::saveBoundaryEditorClick()
@@ -211,7 +233,7 @@ void BoundaryPointEditorView::clearBoundaryEditorClick()
   string boundaryName = "Boundary" + to_string(boundaryIndex);
   _boundaryEditorList->currentItem()->setText(boundaryName.c_str());
 
-  emit clearBoundary(boundaryIndex);
+  emit clearBoundary();
 
   LOG(DEBUG) << "exit";
 }
@@ -261,6 +283,18 @@ void BoundaryPointEditorView::setTool(BoundaryToolType tool, int radius)
       ; 
   }
   */
+}
+
+void BoundaryPointEditorView::setColorOnButton(QPushButton *button, QColor color)
+{
+  LOG(DEBUG) << "enter";
+
+    if (color.isValid()) {
+        button->setPalette(QPalette(color));
+        button->setAutoFillBackground(true);
+    }
+  LOG(DEBUG) << "exit";
+
 }
 
 /*
@@ -493,13 +527,14 @@ void BoundaryPointEditorView::clear()
 void BoundaryPointEditorView::onBoundaryEditorListItemClicked(QListWidgetItem* item)
 {
 
-  
+  int boundaryIndex = -1;  // indicates no saved boundary
   string fileName = item->text().toUtf8().constData();
   bool found = (fileName.find("<none>") != string::npos);
   if (!found)
   {
-    int boundaryIndex = _boundaryEditorList->currentRow()+1;
-    emit loadBoundary(boundaryIndex);
+    boundaryIndex = _boundaryEditorList->currentRow()+1;
+  }
+  emit loadBoundary(boundaryIndex);
     /*
     //if (_boundaryDir.empty())
     //  _boundaryDir = BoundaryPointEditor::Instance()->getRootBoundaryDir();
@@ -523,7 +558,7 @@ void BoundaryPointEditorView::onBoundaryEditorListItemClicked(QListWidgetItem* i
 
     _ppi->update();   //forces repaint which clears existing polygon
     */
-  }
+  //}
   
 }
 
@@ -983,6 +1018,29 @@ string BoundaryPointEditorView::getBoundaryFilePath(string &fieldName, int sweep
 	return(_boundaryDir + "/field" + fieldName + "-sweep" + to_string(sweepIndex) + "-" + boundaryFileName);
 }
 */
+
+// incoming message
+void BoundaryPointEditorView::boundaryColorProvided(QColor color) {
+  setColorOnButton(boundaryColorButton, color);
+}
+
+
+// outgoing message
+void BoundaryPointEditorView::setBoundaryColor()
+{   
+  LOG(DEBUG) << "enter";
+
+      const QColor color = QColorDialog::getColor(Qt::green, this);
+
+    if (color.isValid()) {
+        boundaryColorButton->setPalette(QPalette(color));
+        boundaryColorButton->setAutoFillBackground(true);
+        emit boundaryColorChanged(color);
+    }
+  
+  LOG(DEBUG) << "exit";
+}
+
 void BoundaryPointEditorView::helpBoundaryEditorClick()
 {
   QDesktopServices::openUrl(QUrl("https://vimeo.com/369963107"));
@@ -1075,6 +1133,12 @@ void BoundaryPointEditorView::setBoundaryFile(int boundaryIndex, string &fileNam
 
 void BoundaryPointEditorView::closeEvent() {
     emit boundaryPointEditorClosed();
+}
+
+
+void BoundaryPointEditorView::notImplementedMessage() {
+      QMessageBox::information(this, "Not Implemented", "Not Implemented");
+      selectBoundaryTool(BoundaryToolType::polygon, 0);
 }
 
 /*

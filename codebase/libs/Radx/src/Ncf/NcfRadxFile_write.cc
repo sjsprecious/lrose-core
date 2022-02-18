@@ -394,9 +394,11 @@ int NcfRadxFile::writeToPath(const RadxVol &vol,
   _writeVol->countGeorefsNotMissing(_geoCount);
 
   if (_verbose) {
-    cerr << "============= GEOREF FIELD COUNT ==================" << endl;
-    _geoCount.print(cerr);
-    cerr << "===================================================" << endl;
+    if (_georefsActive) {
+      cerr << "============= GEOREF FIELD COUNT ==================" << endl;
+      _geoCount.print(cerr);
+      cerr << "===================================================" << endl;
+    }
   }
 
   // add attributes, dimensions and variables
@@ -3359,6 +3361,11 @@ int NcfRadxFile::_writeFields()
       
     const string &name = _uniqueFieldNames[ifield];
 
+    if (isRayMetaName(name)) {
+      // metadata ray variable
+      continue;
+    }
+    
     // make copy of the field
     
     RadxField *copy = _writeVol->copyField(name);
@@ -3409,7 +3416,7 @@ int NcfRadxFile::_writeFields()
 Nc3Var *NcfRadxFile::_createFieldVar(const RadxField &field)
 
 {
-  
+
   if (_verbose) {
     cerr << "NcfRadxFile::_createFieldVar()" << endl;
     cerr << "  Adding field: " << field.getName() << endl;
@@ -3456,10 +3463,13 @@ Nc3Var *NcfRadxFile::_createFieldVar(const RadxField &field)
   Nc3Var *var = NULL;
 
   if (field.getIsRayQualifier()) {
+    // 1-D qualifier field
     var = _file.getNc3File()->add_var(fieldName.c_str(), ncType, _timeDim);
   } else if (_nGatesVary) {
+    // 1-D staggered array field
     var = _file.getNc3File()->add_var(fieldName.c_str(), ncType, _nPointsDim);
   } else {
+    // normal 2-D field
     var = _file.getNc3File()->add_var(fieldName.c_str(), ncType, _timeDim, _rangeDim);
   }
   
@@ -3512,6 +3522,9 @@ Nc3Var *NcfRadxFile::_createFieldVar(const RadxField &field)
   if (field.getComment().size() > 0) {
     iret |= _file.addAttr(var, COMMENT, field.getComment());
   }
+  if (field.getAncillaryVariables().size() > 0) {
+    iret |= _file.addAttr(var, ANCILLARY_VARIABLES, field.getAncillaryVariables());
+  }
   iret |= _file.addAttr(var, SAMPLING_RATIO, (float) field.getSamplingRatio());
   
   if (field.getFieldFolds()) {
@@ -3522,6 +3535,42 @@ Nc3Var *NcfRadxFile::_createFieldVar(const RadxField &field)
   if (field.getIsDiscrete()) {
     iret |= _file.addAttr(var, IS_DISCRETE, "true");
   }
+  if (field.getFlagValues().size() > 0) {
+    const vector<int> &flagValues = field.getFlagValues();
+    switch (ncType) {
+      case NC_BYTE: {
+        vector<ncbyte> vals;
+        for (size_t ii = 0; ii < flagValues.size(); ii++) {
+          vals.push_back((ncbyte) flagValues[ii]);
+        }
+        iret |= _file.addAttr(var, FLAG_VALUES, vals);
+        break;
+      }
+      case NC_SHORT: {
+        vector<short> vals;
+        for (size_t ii = 0; ii < flagValues.size(); ii++) {
+          vals.push_back((short) flagValues[ii]);
+        }
+        iret |= _file.addAttr(var, FLAG_VALUES, vals);
+        break;
+      }
+      default: {
+        iret |= _file.addAttr(var, FLAG_VALUES, flagValues);
+      }
+    }
+  } // if (field.getFlagValues().size() > 0) 
+  if (field.getFlagMeanings().size() > 0) {
+    const vector<string> &flagMeanings = field.getFlagMeanings();
+    string flagMeaningsStr;
+    for (size_t ii = 0; ii < flagMeanings.size(); ii++) {
+      flagMeaningsStr += flagMeanings[ii];
+      if (ii != flagMeanings.size() - 1) {
+        flagMeaningsStr += " ";
+      }
+    }
+    iret |= _file.addAttr(var, FLAG_MEANINGS, flagMeaningsStr);
+  }
+  
 
   switch (ncType) {
     case nc3Double: {
@@ -3857,7 +3906,7 @@ string NcfRadxFile::_computeWritePath(const RadxVol &vol,
             "%s%.4d%.2d%.2d%c%.2d%.2d%.2d%s"
             "_to_%.4d%.2d%.2d%c%.2d%.2d%.2d%s"
             "%s%s%s"
-            "%s%s%s%s.nc",
+            "%s%s%s%s%s.nc",
             prefix.c_str(),
             startTime.getYear(), startTime.getMonth(), startTime.getDay(),
             dateTimeConnector,
@@ -3881,7 +3930,7 @@ string NcfRadxFile::_computeWritePath(const RadxVol &vol,
     sprintf(fileName,
             "%s%.4d%.2d%.2d%c%.2d%.2d%.2d%s"
             "%s%s%s"
-            "%s%s%s%s.nc",
+            "%s%s%s%s%s.nc",
             prefix.c_str(),
             startTime.getYear(), startTime.getMonth(), startTime.getDay(),
             dateTimeConnector,
@@ -3901,7 +3950,7 @@ string NcfRadxFile::_computeWritePath(const RadxVol &vol,
     sprintf(fileName,
             "%s%.4d%.2d%.2d%c%.2d%.2d%.2d%s"
             "%s%s%s"
-            "%s%s%s%s.nc",
+            "%s%s%s%s%s.nc",
             prefix.c_str(),
             endTime.getYear(), endTime.getMonth(), endTime.getDay(),
             dateTimeConnector,
@@ -3922,7 +3971,7 @@ string NcfRadxFile::_computeWritePath(const RadxVol &vol,
     sprintf(fileName,
             "%s%.4d%.2d%.2d%c%.2d%.2d%.2d%s"
             "%s%s%s"
-            "%s%s%s.nc",
+            "%s%s%s%s.nc",
             prefix.c_str(),
             fileTime.getYear(), fileTime.getMonth(), fileTime.getDay(),
             dateTimeConnector,

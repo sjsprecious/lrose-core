@@ -20,9 +20,7 @@ set (SRCS
       Boundary.cc
       ConvectionFinder.cc
       DataTimes.cc
-      DualThresh.cc
       FileLock.cc
-      GridClump.cc
       Identify.cc
       InputMdv.cc
       Main.cc
@@ -113,6 +111,9 @@ if(IS_DIRECTORY /usr/lib/x86_64-linux-gnu/hdf5/serial)
 endif()
 if(IS_DIRECTORY /usr/local/lib)
   link_directories (/usr/local/lib)
+endif()
+if(${CMAKE_VERSION} VERSION_GREATER "3.13.0")
+  add_link_options( -L${CMAKE_INSTALL_PREFIX}/lib )
 endif()
 
 # link libs

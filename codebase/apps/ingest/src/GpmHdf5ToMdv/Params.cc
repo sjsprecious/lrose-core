@@ -835,7 +835,93 @@
     memset(tt, 0, sizeof(TDRPtable));
     tt->ptype = COMMENT_TYPE;
     tt->param_name = tdrpStrDup("Comment 4");
-    tt->comment_hdr = tdrpStrDup("OUTPUT REGULAR LAT/LON GRID");
+    tt->comment_hdr = tdrpStrDup("OUTPUT FIELDS");
+    tt->comment_text = tdrpStrDup("");
+    tt++;
+    
+    // Parameter 'Comment 5'
+    
+    memset(tt, 0, sizeof(TDRPtable));
+    tt->ptype = COMMENT_TYPE;
+    tt->param_name = tdrpStrDup("Comment 5");
+    tt->comment_hdr = tdrpStrDup("OUTPUT ENCODING AND COMPRESSION");
+    tt->comment_text = tdrpStrDup("");
+    tt++;
+    
+    // Parameter 'output_fields'
+    // ctype is '_output_field_t'
+    
+    memset(tt, 0, sizeof(TDRPtable));
+    tt->ptype = STRUCT_TYPE;
+    tt->param_name = tdrpStrDup("output_fields");
+    tt->descr = tdrpStrDup("Output fields details.");
+    tt->help = tdrpStrDup("These are the fields that will be written to the output files.");
+    tt->array_offset = (char *) &_output_fields - &_start_;
+    tt->array_n_offset = (char *) &output_fields_n - &_start_;
+    tt->is_array = TRUE;
+    tt->array_len_fixed = FALSE;
+    tt->array_elem_size = sizeof(output_field_t);
+    tt->array_n = 2;
+    tt->struct_def.name = tdrpStrDup("output_field_t");
+    tt->struct_def.nfields = 5;
+    tt->struct_def.fields = (struct_field_t *)
+        tdrpMalloc(tt->struct_def.nfields * sizeof(struct_field_t));
+      tt->struct_def.fields[0].ftype = tdrpStrDup("string");
+      tt->struct_def.fields[0].fname = tdrpStrDup("groupName");
+      tt->struct_def.fields[0].ptype = STRING_TYPE;
+      tt->struct_def.fields[0].rel_offset = 
+        (char *) &_output_fields->groupName - (char *) _output_fields;
+      tt->struct_def.fields[1].ftype = tdrpStrDup("string");
+      tt->struct_def.fields[1].fname = tdrpStrDup("gpmName");
+      tt->struct_def.fields[1].ptype = STRING_TYPE;
+      tt->struct_def.fields[1].rel_offset = 
+        (char *) &_output_fields->gpmName - (char *) _output_fields;
+      tt->struct_def.fields[2].ftype = tdrpStrDup("string");
+      tt->struct_def.fields[2].fname = tdrpStrDup("outputName");
+      tt->struct_def.fields[2].ptype = STRING_TYPE;
+      tt->struct_def.fields[2].rel_offset = 
+        (char *) &_output_fields->outputName - (char *) _output_fields;
+      tt->struct_def.fields[3].ftype = tdrpStrDup("string");
+      tt->struct_def.fields[3].fname = tdrpStrDup("longName");
+      tt->struct_def.fields[3].ptype = STRING_TYPE;
+      tt->struct_def.fields[3].rel_offset = 
+        (char *) &_output_fields->longName - (char *) _output_fields;
+      tt->struct_def.fields[4].ftype = tdrpStrDup("encoding_type_t");
+      tt->struct_def.fields[4].fname = tdrpStrDup("encoding");
+      tt->struct_def.fields[4].ptype = ENUM_TYPE;
+      tt->struct_def.fields[4].rel_offset = 
+        (char *) &_output_fields->encoding - (char *) _output_fields;
+        tt->struct_def.fields[4].enum_def.name = tdrpStrDup("encoding_type_t");
+        tt->struct_def.fields[4].enum_def.nfields = 3;
+        tt->struct_def.fields[4].enum_def.fields = (enum_field_t *) tdrpMalloc
+          (tt->struct_def.fields[4].enum_def.nfields * sizeof(enum_field_t));
+        tt->struct_def.fields[4].enum_def.fields[0].name = tdrpStrDup("ENCODING_INT8");
+        tt->struct_def.fields[4].enum_def.fields[0].val = ENCODING_INT8;
+        tt->struct_def.fields[4].enum_def.fields[1].name = tdrpStrDup("ENCODING_INT16");
+        tt->struct_def.fields[4].enum_def.fields[1].val = ENCODING_INT16;
+        tt->struct_def.fields[4].enum_def.fields[2].name = tdrpStrDup("ENCODING_FLOAT32");
+        tt->struct_def.fields[4].enum_def.fields[2].val = ENCODING_FLOAT32;
+    tt->n_struct_vals = 10;
+    tt->struct_vals = (tdrpVal_t *)
+        tdrpMalloc(tt->n_struct_vals * sizeof(tdrpVal_t));
+      tt->struct_vals[0].s = tdrpStrDup("SLV");
+      tt->struct_vals[1].s = tdrpStrDup("zFactorCorrected");
+      tt->struct_vals[2].s = tdrpStrDup("DBZ");
+      tt->struct_vals[3].s = tdrpStrDup("reflectivity");
+      tt->struct_vals[4].e = ENCODING_FLOAT32;
+      tt->struct_vals[5].s = tdrpStrDup("FLG");
+      tt->struct_vals[6].s = tdrpStrDup("qualityFlag");
+      tt->struct_vals[7].s = tdrpStrDup("Qual");
+      tt->struct_vals[8].s = tdrpStrDup("qualityFlag");
+      tt->struct_vals[9].e = ENCODING_FLOAT32;
+    tt++;
+    
+    // Parameter 'Comment 6'
+    
+    memset(tt, 0, sizeof(TDRPtable));
+    tt->ptype = COMMENT_TYPE;
+    tt->param_name = tdrpStrDup("Comment 6");
+    tt->comment_hdr = tdrpStrDup("OUTPUT GRID - LAT/LON");
     tt->comment_text = tdrpStrDup("");
     tt++;
     
@@ -929,11 +1015,11 @@
     tt->single_val.d = 1;
     tt++;
     
-    // Parameter 'Comment 5'
+    // Parameter 'Comment 7'
     
     memset(tt, 0, sizeof(TDRPtable));
     tt->ptype = COMMENT_TYPE;
-    tt->param_name = tdrpStrDup("Comment 5");
+    tt->param_name = tdrpStrDup("Comment 7");
     tt->comment_hdr = tdrpStrDup("OUTPUT URL");
     tt->comment_text = tdrpStrDup("");
     tt++;
@@ -950,42 +1036,11 @@
     tt->single_val.s = tdrpStrDup("mdvp:://localhost::/tmp/mdv/gpm");
     tt++;
     
-    // Parameter 'Comment 6'
+    // Parameter 'Comment 8'
     
     memset(tt, 0, sizeof(TDRPtable));
     tt->ptype = COMMENT_TYPE;
-    tt->param_name = tdrpStrDup("Comment 6");
-    tt->comment_hdr = tdrpStrDup("OUTPUT ENCODING AND COMPRESSION");
-    tt->comment_text = tdrpStrDup("");
-    tt++;
-    
-    // Parameter 'output_encoding_type'
-    // ctype is '_encoding_type_t'
-    
-    memset(tt, 0, sizeof(TDRPtable));
-    tt->ptype = ENUM_TYPE;
-    tt->param_name = tdrpStrDup("output_encoding_type");
-    tt->descr = tdrpStrDup("Set output encoding type.");
-    tt->help = tdrpStrDup("");
-    tt->val_offset = (char *) &output_encoding_type - &_start_;
-    tt->enum_def.name = tdrpStrDup("encoding_type_t");
-    tt->enum_def.nfields = 3;
-    tt->enum_def.fields = (enum_field_t *)
-        tdrpMalloc(tt->enum_def.nfields * sizeof(enum_field_t));
-      tt->enum_def.fields[0].name = tdrpStrDup("ENCODING_INT8");
-      tt->enum_def.fields[0].val = ENCODING_INT8;
-      tt->enum_def.fields[1].name = tdrpStrDup("ENCODING_INT16");
-      tt->enum_def.fields[1].val = ENCODING_INT16;
-      tt->enum_def.fields[2].name = tdrpStrDup("ENCODING_FLOAT32");
-      tt->enum_def.fields[2].val = ENCODING_FLOAT32;
-    tt->single_val.e = ENCODING_INT16;
-    tt++;
-    
-    // Parameter 'Comment 7'
-    
-    memset(tt, 0, sizeof(TDRPtable));
-    tt->ptype = COMMENT_TYPE;
-    tt->param_name = tdrpStrDup("Comment 7");
+    tt->param_name = tdrpStrDup("Comment 8");
     tt->comment_hdr = tdrpStrDup("OUTPUT METADATA STRINGS");
     tt->comment_text = tdrpStrDup("These will be used if the file does not contain suitable information.");
     tt++;

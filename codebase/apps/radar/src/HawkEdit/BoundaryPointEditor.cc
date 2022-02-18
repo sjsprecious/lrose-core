@@ -64,25 +64,48 @@ BoundaryPointEditor::BoundaryPointEditor(BoundaryPointEditorView *bpeView,
 	_boundaryEditorView = bpeView;
 	_boundaryView = boundaryView;
 	_boundaryPointEditorModel = new BoundaryPointEditorModel();
+	makeConnections();
+	_boundaryEditorView->selectBoundaryTool(BoundaryToolType::polygon, 0);
+	string color = _boundaryPointEditorModel->getBoundaryColor();
+	updateBoundaryColor(color);
 }
 
 BoundaryPointEditor::~BoundaryPointEditor() {
 	delete _boundaryPointEditorModel;
 }
 
-/*
-void BoundaryPointEditor::createBoundaryEditorDialog() {
-	_boundaryEditorView = new BoundaryPointEditorView();
-	// createBoundaryEditorDialog();
+
+void BoundaryPointEditor::makeConnections() {
+
 	// associate event slots
-	connect(_boundaryEditorView, SIGNAL(userClickedPolygonButton),
-		this, SLOT(userClickedPolygonButton));
-	connect(_boundaryEditorView, SIGNAL(userClickedCircleButton),
-		this, SLOT(userClickedCircleButton));
-	connect(_boundaryEditorView, SIGNAL(userClickedBrushButton),
-		this, SLOT(userClickedBrushButton));	
+	connect(_boundaryEditorView, SIGNAL(userClickedPolygonButton()),
+		this, SLOT(userClickedPolygonButton()));
+	connect(_boundaryEditorView, SIGNAL(userClickedCircleButton()),
+		this, SLOT(userClickedCircleButton()));
+	connect(_boundaryEditorView, SIGNAL(userClickedBrushButton()),
+		this, SLOT(userClickedBrushButton()));	
+	connect(_boundaryEditorView, SIGNAL(clearBoundary()),
+		this, SLOT(clearBoundaryEditorClick()));	
+
+	connect(_boundaryEditorView, SIGNAL(boundaryColorChanged(QColor)),
+		this, SLOT(boundaryColorChanged(QColor)));
+
+		//  connect(_view, SIGNAL(boundaryColorChanged(QColor)), this, SLOT(newBoundaryColorSelected(QColor)));	
 }
-*/
+
+void BoundaryPointEditor::updateBoundaryColor(string colorName) 
+{
+  // get info from boundary point editor
+  //string colorName = _model->getBoundaryColor();
+  QString colorNameQ = QString::fromStdString(colorName);
+  if (QColor::isValidColor(colorNameQ)) {
+    QColor color(colorNameQ);
+    _boundaryEditorView->boundaryColorProvided(color);
+  }
+  else {
+    throw "Cannot recognize color";
+  }
+}
 
 void BoundaryPointEditor::userClickedPolygonButton() {
 	setTool(BoundaryToolType::polygon);
@@ -283,6 +306,20 @@ void BoundaryPointEditor::coutPoints(vector<Point> &pts)
 }
 */
 
+void BoundaryPointEditor::boundaryColorChanged(QColor newColor) {
+	string rgbName = newColor.name().toStdString(); //  "#RRGGBB";
+	setBoundaryColor(rgbName);
+	updateBoundaryColor(rgbName);
+}
+
+void BoundaryPointEditor::setBoundaryColor(string &newColor) {
+  _boundaryPointEditorModel->setBoundaryColor(newColor);
+}
+
+string BoundaryPointEditor::getBoundaryColor() {
+  return _boundaryPointEditorModel->getBoundaryColor();
+}
+
 // draws the boundary
 void BoundaryPointEditor::drawBoundary(WorldPlot worldPlot, QPainter &painter)
 {
@@ -291,7 +328,7 @@ void BoundaryPointEditor::drawBoundary(WorldPlot worldPlot, QPainter &painter)
 	float pointBoxScale = _boundaryPointEditorModel->getPointBoxScale();
 	bool isFinished = _boundaryPointEditorModel->isAClosedPolygon();
 	BoundaryToolType currentTool = _boundaryPointEditorModel->getCurrentTool();
-	string color = _boundaryPointEditorModel->getYellowBrush();
+	string color = _boundaryPointEditorModel->getBoundaryColor(); // getYellowBrush();
 
 	_boundaryView->draw(worldPlot, painter,
 	  points,  pointBoxScale,  isFinished,
@@ -323,11 +360,29 @@ bool BoundaryPointEditor::evaluateCursor(bool isShiftKeyDown) {
   return changeCursor;
 }
 
-void BoundaryPointEditor::evaluateMouseRelease(int worldReleaseX, int worldReleaseY,
+bool BoundaryPointEditor::evaluatePoint(int worldReleaseX, int worldReleaseY) {
+  bool isUsed = false;
+  if (!_boundaryPointEditorModel->isAClosedPolygon()) {
+  	_boundaryPointEditorModel->addPoint(worldReleaseX, worldReleaseY);
+  	isUsed = true;
+  }
+  return isUsed;
+}
+
+bool BoundaryPointEditor::moveBoundaryPoint(int startX, int startY,
+ int worldX, int worldY) {
+  bool redraw = _boundaryPointEditorModel->moveBoundaryPoint(
+  	startX, startY, worldX, worldY);
+  return redraw;
+}
+
+
+
+void BoundaryPointEditor::addDeleteBoundaryPoint(int worldReleaseX, int worldReleaseY,
 	bool isShiftKeyDown)
 {
-
-	_boundaryPointEditorModel->evaluateMouseRelease(worldReleaseX, worldReleaseY,
+  LOG(DEBUG) << "enter x,y = " << worldReleaseX << "," << worldReleaseY;
+	_boundaryPointEditorModel->addDeleteBoundaryPoint(worldReleaseX, worldReleaseY,
 		isShiftKeyDown);
 
 	/*
@@ -678,11 +733,14 @@ int BoundaryPointEditor::getFurthestPtIndex(int x, int y)
 
 	return(indexAtMaxDist);
 }
-
+*/
+/*
 // makes a circle of points at (x,y) with radius
 // (relevant with the Circle Tool)
 void BoundaryPointEditor::makeCircle(int x, int y, float radius)
 {
+	_boundaryPointEditorModel->makeCircle(x, y, radius);
+	
 	points.clear();
 	circleOrigin.x = x;
 	circleOrigin.y = y;
@@ -696,6 +754,7 @@ void BoundaryPointEditor::makeCircle(int x, int y, float radius)
 	}
 
 	points.push_back(points[0]);
+	
 }
 
 // User has Shift key down and has clicked mouse, so either insert or delete a point
@@ -712,22 +771,24 @@ void BoundaryPointEditor::checkToAddOrDelPoint(float x, float y)
 				insertPoint(x, y);
 	}
 }
+*/
 
 int BoundaryPointEditor::getCircleRadius()
 {
+	int circleRadius = _boundaryPointEditorModel->getCircleRadius();
 	return(circleRadius);
 }
 
 int BoundaryPointEditor::getBrushRadius()
 {
+	int brushRadius = _boundaryPointEditorModel->getBrushRadius();
 	return(brushRadius);
 }
-*/
 
-bool BoundaryPointEditor::evaluatePoint(int worldX, int worldY)
+
+bool BoundaryPointEditor::isOverBoundaryPoint(int worldX, int worldY)
 {
-  bool redraw = _boundaryPointEditorModel->evaluatePoint(worldX, worldY);
-  return redraw;
+  return _boundaryPointEditorModel->isOverAnyPoint(worldX, worldY);
 }
 
 // returns the file path for the boundary file, given the currently selected field and sweep
@@ -741,13 +802,13 @@ void BoundaryPointEditor::save(int boundaryIndex, string &selectedFieldName,
 	LOG(DEBUG) << "enter ";
 
  	_boundaryPointEditorModel->save(boundaryIndex, selectedFieldName, sweepIndex, radarFilePath);
-
 	LOG(DEBUG) << "exit";
 
 }
 
 // Loads the boundary file given by path
 // It also sets the correct editor tool (polygon, circle, or brush) based on what is in the file
+// if boundaryIndex < 0, no saved boundary
 bool BoundaryPointEditor::load(int boundaryIndex, string &selectedFieldName,
  int sweepIndex, string &radarFilePath)
 {
@@ -769,6 +830,8 @@ bool BoundaryPointEditor::load(int boundaryIndex, string &selectedFieldName,
       radius = 0;
     }
 		_boundaryEditorView->selectBoundaryTool(currentTool, radius);
+		string color = _boundaryPointEditorModel->getBoundaryColor();
+	  updateBoundaryColor(color);
 	} 
 	return successful;
 
@@ -978,6 +1041,7 @@ void BoundaryPointEditor::onBoundaryEditorListItemClicked(string &fileName)
 void BoundaryPointEditor::clearBoundaryEditorClick()
 {
   _boundaryPointEditorModel->clear();
+  emit clearBoundaryClicked();
   // _ppi->update();   //forces repaint which clears existing polygon
 }
 

@@ -11,16 +11,29 @@ RayLocationModel::RayLocationModel() {
 
 RayLocationModel::~RayLocationModel() {}
 
+void RayLocationModel::init() {
+  for (int ii = 0; ii < RayLoc::RAY_LOC_N; ii++) {
+    ray_loc[ii].ray = NULL;
+    ray_loc[ii].active = false;
+    ray_loc[ii].startIndex = 0;
+    ray_loc[ii].endIndex = 0;    
+    //LOG(DEBUG) << "ray_loc[" << i << "].startIdx = " << ray_loc[i].startIndex;
+    //LOG(DEBUG) << "  ray_loc[" << i << "].endIdx = " << ray_loc[i].endIndex;
+  }
+}
+
 // call when new data file is read, or when switching to new sweep?
-void RayLocationModel::sortRaysIntoRayLocations(float ppi_rendering_beam_width) {
+void RayLocationModel::sortRaysIntoRayLocations(float ppi_rendering_beam_width,
+  int sweepNumber) {
   LOG(DEBUG) << "enter";
+  init();
 //	_storeRayLoc(const RadxRay *ray, const double az,
 //                                const double beam_width, RayLoc *ray_loc)
 
   double half_angle = ppi_rendering_beam_width / 2.0;
 
   DataModel *dataModel = DataModel::Instance();
-  const vector<RadxRay *> &listOfRays = dataModel->getRays();
+  vector<RadxRay *> &listOfRays = dataModel->getRays();
   vector<RadxRay *>::const_iterator rayItr;
   for (rayItr = listOfRays.begin(); rayItr != listOfRays.end(); ++rayItr) {
   // for each ray in file,
@@ -52,43 +65,46 @@ void RayLocationModel::sortRaysIntoRayLocations(float ppi_rendering_beam_width) 
     _endAz = az + max_half_angle + 0.1;
   }
  */
-  	const RadxRay *ray = *rayItr;
-    double az = ray->getAzimuthDeg();
-    double startAz = az - half_angle - 0.1;
-    double endAz = az + half_angle + 0.1;
+    RadxRay *ray = *rayItr;
+         
+    if (ray->getSweepNumber() == sweepNumber) {   
 
 
+      double az = ray->getAzimuthDeg();
+      double startAz = az - half_angle - 0.1;
+      double endAz = az + half_angle + 0.1;
 
-  // store
-    
-    int startIndex = (int) (startAz * RayLoc::RAY_LOC_RES);
-    int endIndex = (int) (endAz * RayLoc::RAY_LOC_RES + 1);
+    // store
+      
+      int startIndex = (int) (startAz * RayLoc::RAY_LOC_RES);
+      int endIndex = (int) (endAz * RayLoc::RAY_LOC_RES + 1);
 
-    if (startIndex < 0) startIndex = 0;
-    if (endIndex >= RayLoc::RAY_LOC_N) endIndex = RayLoc::RAY_LOC_N - 1;   
+      if (startIndex < 0) startIndex = 0;
+      if (endIndex >= RayLoc::RAY_LOC_N) endIndex = RayLoc::RAY_LOC_N - 1;   
 
-  // Clear out any rays in the locations list that are overlapped by the
-  // new ray
-    
-  //_clearRayOverlap(startIndex, endIndex, ray_loc);
+    // Clear out any rays in the locations list that are overlapped by the
+    // new ray
+      
+    //_clearRayOverlap(startIndex, endIndex, ray_loc);
 
-  // Set the locations associated with this ray
+    // Set the locations associated with this ray
 
-    if (endIndex < startIndex) {
-    	LOG(DEBUG) << "ERROR endIndex: " << endIndex << " < startIndex: " << startIndex;
-    } else {
-	    for (int ii = startIndex; ii < endIndex; ii++) {
-	      ray_loc[ii].ray = ray;
-	      ray_loc[ii].active = true;
-	      ray_loc[ii].startIndex = startIndex;
-	      ray_loc[ii].endIndex = endIndex;
-	    }
+      if (endIndex < startIndex) {
+      	LOG(DEBUG) << "ERROR endIndex: " << endIndex << " < startIndex: " << startIndex;
+      } else {
+  	    for (int ii = startIndex; ii < endIndex; ii++) {
+  	      ray_loc[ii].ray = ray;
+  	      ray_loc[ii].active = true;
+  	      ray_loc[ii].startIndex = startIndex;
+  	      ray_loc[ii].endIndex = endIndex;
+  	    }
+      }
     }
   }
 
   for (int i = 0; i< RayLoc::RAY_LOC_N; i++) {
-  	LOG(DEBUG) << "ray_loc[" << i << "].startIdx = " << ray_loc[i].startIndex;
-  	LOG(DEBUG) << "  ray_loc[" << i << "].endIdx = " << ray_loc[i].endIndex;
+  	//LOG(DEBUG) << "ray_loc[" << i << "].startIdx = " << ray_loc[i].startIndex;
+  	//LOG(DEBUG) << "  ray_loc[" << i << "].endIdx = " << ray_loc[i].endIndex;
   }
 
   LOG(DEBUG) << "exit";
@@ -99,13 +115,33 @@ size_t RayLocationModel::getNRayLocations() {
 };
 
 double RayLocationModel::getStartRangeKm(size_t rayIdx) {
-	const RadxRay *ray = ray_loc.at(rayIdx).ray;
+	RadxRay *ray = ray_loc.at(rayIdx).ray;
 	return ray->getStartRangeKm();
 }
 
 double RayLocationModel::getGateSpacingKm(size_t rayIdx) {
-	const RadxRay *ray = ray_loc.at(rayIdx).ray;
+	RadxRay *ray = ray_loc.at(rayIdx).ray;
 	return ray->getGateSpacingKm();
+}
+
+// over all the rays, find the maximum range
+double RayLocationModel::getMaxRangeKm() {
+
+  double max = 0.0;
+
+  DataModel *dataModel = DataModel::Instance();
+  vector<RadxRay *> &listOfRays = dataModel->getRays();
+  vector<RadxRay *>::const_iterator rayItr;
+  for (rayItr = listOfRays.begin(); rayItr != listOfRays.end(); ++rayItr) {
+    RadxRay *ray = *rayItr;
+
+    double fieldRange = ray->getStartRangeKm() + 
+      (double) ray->getNGates() * ray->getGateSpacingKm();
+    if (fieldRange > max) {
+      max = fieldRange;
+    }
+  }
+  return max;
 }
 
 size_t RayLocationModel::getEndIndex(size_t rayIdx) {
@@ -127,19 +163,30 @@ double RayLocationModel::getStopAngle(size_t rayIdx) {
 vector <float> *RayLocationModel::getRayData(size_t rayIdx, string fieldName) {
   vector<float> *dataVector = new vector<float>(0);
 	// get the ray 
-  const RadxRay *ray = ray_loc.at(rayIdx).ray;
+  RadxRay *ray = ray_loc.at(rayIdx).ray;
   if (ray != NULL)  {// throw std::invalid_argument("rayIdx has no ray data");
   size_t nGates = ray->getNGates(); 
 
   // get the field data
-  const RadxField *field = ray->getField(fieldName);
+  DataModel *dataModel = DataModel::Instance();
+  //const RadxField *field = NULL;
+ // try  {
+ RadxField *field = dataModel->fetchDataField(ray, fieldName);
+ // } catch (std::invalid_argument &ex) {
 
+ // }
+  //const RadxField *field = ray->getField(fieldName);
+  if (field == NULL) {
+    string msg = "no data for field in ray ";
+    msg.append(fieldName);
+    throw std::invalid_argument(msg);
+  }
   // cerr << "there arenGates " << nGates;
 
   //field->convertToFl32();
   //convertToType(Radx::Fl32);
   
-  const float *data = field->getDataFl32();
+  float *data = field->getDataFl32();
   dataVector->resize(nGates);
   dataVector->assign(data, data+nGates);
   }
@@ -147,7 +194,7 @@ vector <float> *RayLocationModel::getRayData(size_t rayIdx, string fieldName) {
   return dataVector;
 }
 
-const RadxRay *RayLocationModel::getClosestRay(double azDeg) {
+RadxRay *RayLocationModel::getClosestRay(double azDeg) {
 	int rayIndex = (int) (azDeg * RayLoc::RAY_LOC_RES);
     if ((rayIndex < 0) || (rayIndex >= RayLoc::RAY_LOC_N)) {
     	throw "azimuth out of range";

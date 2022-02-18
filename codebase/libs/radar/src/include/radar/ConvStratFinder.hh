@@ -30,7 +30,7 @@
 //
 ////////////////////////////////////////////////////////////////////
 //
-// ConvStratFinder partitions stratiform and convective regions in a
+// ConvStratFinder echoTypes stratiform and convective regions in a
 // Cartesian radar volume
 //
 /////////////////////////////////////////////////////////////////////
@@ -43,7 +43,8 @@
 #include <toolsa/TaArray.hh>
 #include <toolsa/TaThread.hh>
 #include <dataport/port_types.h>
-#include <euclid/GridClumping.hh>
+#include <euclid/ClumpingMgr.hh>
+#include <euclid/ClumpProps.hh>
 using namespace std;
 
 ////////////////////////
@@ -56,11 +57,13 @@ public:
   typedef enum {
     CATEGORY_MISSING = 0,
     CATEGORY_STRATIFORM_LOW = 14,
+    CATEGORY_STRATIFORM = 15,
     CATEGORY_STRATIFORM_MID = 16,
     CATEGORY_STRATIFORM_HIGH = 18,
     CATEGORY_MIXED = 25,
     CATEGORY_CONVECTIVE_ELEVATED = 32,
     CATEGORY_CONVECTIVE_SHALLOW = 34,
+    CATEGORY_CONVECTIVE = 35,
     CATEGORY_CONVECTIVE_MID = 36,
     CATEGORY_CONVECTIVE_DEEP = 38,
     CATEGORY_UNKNOWN
@@ -84,15 +87,23 @@ public:
   ////////////////////////////////////////////////////////////////////
   // Set debugging to on or verbose
 
-  void setDebug(bool state) { _debug = state; }
+  void setDebug(bool val) { _debug = val; }
 
-  void setVerbose(bool state) {
-    _verbose = state;
-    if (state) {
+  void setVerbose(bool val) {
+    _verbose = val;
+    if (val) {
       _debug = true;
     }
   }
-  
+
+  ////////////////////////////////////////////////////////////////////
+  // Set use of multiple threads, default is TRUE
+
+  void setUseMultipleThreads(bool val)
+  {
+    _useMultipleThreads = val;
+  }
+
   // set algorithm parameters
 
   ////////////////////////////////////////////////////////////////////
@@ -108,10 +119,41 @@ public:
   void setMaxValidHtKm(double val) { _maxValidHtKm = val; }
 
   ////////////////////////////////////////////////////////////////////
+  // Use the col max reflectivity for computing the texture,
+  // instead of doing this on each plane.
+  // This uses less CPU.
+  
+  void setUseDbzColMax(bool val) { _useDbzColMax = val; }
+  
+  ////////////////////////////////////////////////////////////////////
   // Minimum reflectivity threshold for this analysis (dBZ).
   // Reflectivity below this threshold is set to missing.
+  // This selects the grid points we use for computing the active
+  // fraction within the texture radius.
 
   void setMinValidDbz(double val) { _minValidDbz = val; }
+
+  ////////////////////////////////////////////////////////////////////
+  // Set DBZ base.
+  // Before computing the texture, we subtract the baseDBZ
+  // from the measured DBZ.
+  // This adjusts the DBZ values into the positive range.
+  // For S-, C- and X-band radars, this can be set to
+  // 0 dBZ, which is the default.
+  // For Ka-band radars this should be around -10 dBZ.
+  // For W-band radars -20 dBZ is appropriate.
+  
+  void setBaseDbz(double val) { _baseDbz = val; }
+
+  // converting texture to convectivity convectivity
+  // these are the limits for mapping texture to convectivity from 0 and 1
+
+  void setTextureLimitLow(double val) {
+    _textureLimitLow = val;
+  }
+  void setTextureLimitHigh(double val) {
+    _textureLimitHigh = val;
+  }
 
   // set convectivity threshold for convective regions
   // convectivity values above this indicate convective
@@ -120,6 +162,14 @@ public:
     _minConvectivityForConvective = val;
   }
   
+  // set whether to use dual thresholds
+  // this is for splitting clumps using a second convectivity threshold
+  
+  void setUseDualThresholds(double secondary_threshold,
+                            double min_fraction_all_parts,
+                            double min_fraction_each_part,
+                            double min_size_each_part);
+
   // Set convectivity threshold for stratiform regions.
   // Convectivity values below this indicate stratiform.
   // Convectivity values between this and minConvectivityForConvective
@@ -204,6 +254,40 @@ public:
                            size_t nptsPlane);
   
   ////////////////////////////////////////////////////////////////////
+  // Set the fractional limits for convective regions, for
+  // the advanced echo categories, after clumping
+
+  // min convective fraction for deep convection
+  
+  void setMinConvFractionForDeep(double val) {
+    _minConvFractionForDeep = val;
+  }
+
+  // min convective fraction for shallow convection
+  
+  void setMinConvFractionForShallow(double val) {
+    _minConvFractionForShallow = val;
+  }
+  
+  // max shallow convective fraction for elevated convection
+  
+  void setMaxShallowConvFractionForElevated(double val) {
+    _maxShallowConvFractionForElevated = val;
+  }
+
+  // max deep convective fraction for elevated convection
+  
+  void setMaxDeepConvFractionForElevated(double val) {
+    _maxDeepConvFractionForElevated = val;
+  }
+
+  // min stratiform fraction for stratiform below
+  
+  void setMinStratFractionForStratBelow(double val) {
+    _minStratFractionForStratBelow = val;
+  }
+
+  ////////////////////////////////////////////////////////////////////
   // Reflectivity threshold for echo tops (dBZ).
   // Echo tops are defined as the max ht with reflectivity at or
   // above this value.
@@ -220,25 +304,25 @@ public:
                bool projIsLatLon = false);
   
   ////////////////////////////////////////////////////////////////////
-  // compute the partition
+  // compute the echoType
   // Returns 0 on success, -1 on failure
 
-  int computePartition(const fl32 *dbz, fl32 dbzMissingVal);
+  int computeEchoType(const fl32 *dbz, fl32 dbzMissingVal);
 
   // get the input fields
   
   const fl32 *getDbz3D() const { return _dbz3D.dat(); }
   const fl32 *getShallowHtGrid() const { return _shallowHtGrid.dat(); }
   const fl32 *getDeepHtGrid() const { return _deepHtGrid.dat(); }
-  const fl32 *getColMaxDbz() const { return _colMaxDbz.dat(); }
+  const fl32 *getDbzColMax() const { return _dbzColMax.dat(); }
   const fl32 *getFractionActive() const { return _fractionActive.dat(); }
   
   ////////////////////////////////////////////////////////////////////
-  // get the resulting partition
+  // get the resulting echoType
   // will be set to the relevant category
 
-  const ui08 *getPartition3D() const { return _partition3D.dat(); }
-  const ui08 *getPartition2D() const { return _partition2D.dat(); }
+  const ui08 *getEchoType3D() const { return _echoType3D.dat(); }
+  const ui08 *getEchoType2D() const { return _echoType2D.dat(); }
   const fl32 *getConvectiveDbz() const { return _convDbz.dat(); }
 
   ////////////////////////////////////////////////////////////////////
@@ -246,6 +330,7 @@ public:
   
   const fl32 *getTexture3D() const { return _texture3D.dat(); }
   const fl32 *getTexture2D() const { return _texture2D.dat(); }
+
   const fl32 *getConvectivity3D() const { return _convectivity3D.dat(); }
   const fl32 *getConvectivity2D() const { return _convectivity2D.dat(); }
 
@@ -272,6 +357,10 @@ public:
   const vector<double> &getZKm() const { return _zKm; }
   bool getProjIsLatlon() const { return _projIsLatLon; }
 
+  // clumping manager
+  
+  const ClumpingMgr &getClumpingMgr() const { return _clumping; }
+
   // free up arrays when done, if you want to keep memory usage down
 
   void freeArrays();
@@ -280,7 +369,7 @@ protected:
   
 private:
 
-  class ClumpGeom;
+  class StormClump;
   
   // private data
   
@@ -290,13 +379,23 @@ private:
   bool _debug; // Print debug messages
   bool _verbose; // Print verbose debug messages
 
+  bool _useMultipleThreads;
+
   double _minValidHtKm;
   double _maxValidHtKm;
+  bool _useDbzColMax;
   double _minValidDbz;
+  double _baseDbz;
 
   double _minConvectivityForConvective;
   double _maxConvectivityForStratiform;
   int _minOverlapForClumping;
+  
+  bool _useDualThresholds;
+  double _secondaryConvectivityThreshold;
+  double _minFractionAllParts;
+  double _minFractionEachPart;
+  double _minSizeEachPart;
 
   double _dbzForEchoTops;
 
@@ -306,6 +405,11 @@ private:
   double _minVolForConvectiveKm3;
   double _minVertExtentForConvectiveKm;
 
+  // converting texture to convectivity convectivity
+  // these are the limits mapping to 0 and 1
+  
+  double _textureLimitLow;
+  double _textureLimitHigh;
 
   // specify freezing level, and divergence level, by ht MSL
   // if this is false, grids for fz and div level must be passed in
@@ -313,11 +417,13 @@ private:
   double _shallowHtKm;
   double _deepHtKm;
 
-  // converting texture to convectivity convectivity
-  // these are the limits mapping to 0 and 1
-  
-  double _textureLimitLow;
-  double _textureLimitHigh;
+  // fractions for determining the advanced echo type categories
+
+  double _minConvFractionForDeep;
+  double _minConvFractionForShallow;
+  double _maxShallowConvFractionForElevated;
+  double _maxDeepConvFractionForElevated;
+  double _minStratFractionForStratBelow;
 
   // grid details
 
@@ -341,50 +447,56 @@ private:
 
   // clumping the convective regions
   
-  GridClumping _clumping;
-  int _nClumps;
-  vector<ClumpGeom *> _clumps;
+  ClumpingMgr _clumping;
+  vector<StormClump *> _clumps;
   
   // inputs
   
   TaArray<fl32> _dbz3D;
   TaArray<fl32> _shallowHtGrid; // grid for shallow cloud ht threshold
   TaArray<fl32> _deepHtGrid;    // grid for deep cloud ht threshold
-  TaArray<fl32> _colMaxDbz;
+  TaArray<fl32> _dbzColMax;
   TaArray<fl32> _fractionActive;
   
-  // primary outputs
-  
-  TaArray<ui08> _partition3D;
-  TaArray<ui08> _partition2D;
-  TaArray<fl32> _convDbz;
-
-  // intermediate fields
+  // texture
   
   TaArray<fl32> _texture3D;
   TaArray<fl32> _texture2D;
+  TaArray<fl32> _textureColMax;
+
+  // convectivity
+  
   TaArray<fl32> _convectivity3D;
   TaArray<fl32> _convectivity2D;
 
-  // tops
+  // echoType
+  
+  TaArray<ui08> _echoType3D;
+  TaArray<ui08> _echoType2D;
+
+  // tops etc
 
   TaArray<fl32> _convTopKm;
   TaArray<fl32> _stratTopKm;
   TaArray<fl32> _echoTopKm;
+  TaArray<fl32> _convDbz;
 
   // methods
   
+  int _computeEchoType2D(const fl32 *dbz, fl32 dbzMissingVal);
   void _allocArrays();
   void _initToMissing();
   void _initToMissing(TaArray<fl32> &array, fl32 missingVal);
   void _initToMissing(TaArray<ui08> &array, ui08 missingVal);
-  void _computeColMax();
-  void _finalizePartition();
-  void _computeTexture();
+  void _computeDbzColMax();
+  void _finalizeEchoType();
+  void _computeTextureMultiThreaded();
+  void _computeTextureSingleThreaded();
   void _computeConvectivity();
   void _performClumping();
   void _freeClumps();
-  void _setPartition3D();
+  void _setEchoType3D();
+  void _setEchoType2D();
   void _set2DFields();
   void _computeKernels();
   void _printSettings(ostream &out);
@@ -430,12 +542,15 @@ private:
     }
     
     void setDbz(const fl32 *dbz,
-                const fl32 *dbzColMax,
                 fl32 missingVal)
     {
       _dbz = dbz;
-      _dbzColMax = dbzColMax;
       _missingVal = missingVal;
+    }
+    
+    void setBaseDbz(double val)
+    {
+      _baseDbz = val;
     }
     
     void setFractionCovered(const fl32 *frac)
@@ -465,8 +580,8 @@ private:
     double _minValidFractionForTexture;
     double _minValidFractionForFit;
     fl32 _missingVal;
+    double _baseDbz;
     const fl32 *_dbz;
-    const fl32 *_dbzColMax;
     const fl32 *_fractionCovered;
     fl32 *_texture;
     vector<kernel_t> _kernelOffsets;
@@ -476,27 +591,27 @@ private:
   /////////////////////////////////////////////////////////
   // inner class for clump geometry
 
-  class ClumpGeom
+  class StormClump
   {  
     
   public:   
     
     // constructor
     
-    ClumpGeom(ConvStratFinder *finder,
-              const Clump_order *clump);
+    StormClump(ConvStratFinder *finder,
+               const ClumpProps &cprops);
     
     // destructor
     
-    virtual ~ClumpGeom();
+    virtual ~StormClump();
     
     // compute geom
     
     void computeGeom();
 
-    // Set the partition based on clump properties
+    // Set the echoType based on clump properties
     
-    void setPartition();
+    void setEchoType();
     
     // check for stratiform below
     
@@ -513,7 +628,7 @@ private:
   private:
 
     ConvStratFinder *_finder;
-    const Clump_order *_clump;
+    ClumpProps _cprops;
     int _id;
     double _volumeKm3;
     double _vertExtentKm;

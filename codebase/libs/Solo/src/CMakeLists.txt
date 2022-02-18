@@ -68,6 +68,7 @@ set (SRCS
       ./Solo/OneBoundary.cc
       ./Solo/BoundaryPointManagement.cc
       ./Solo/BoundaryPointMap.cc
+      ./Solo/Boundary.cc
       ./Solo/SoloFunctionsApi.cc
       ./Solo/Despeckle.cc
       ./Solo/FlagOps.cc
@@ -77,6 +78,7 @@ set (SRCS
       ./Solo/ThresholdField.cc
       ./Solo/ForcedUnfolding.cc
       ./Solo/MergeFields.cc
+      ./Solo/NavigationCorrection.cc
       ./Solo/RemoveRing.cc
       ./Solo/RainRate.cc
       ./Solo/Abs.cc

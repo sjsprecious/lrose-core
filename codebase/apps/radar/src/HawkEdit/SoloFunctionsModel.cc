@@ -4,6 +4,7 @@
 #include <regex>
 #include <stdio.h>
 #include <string.h>
+#include <float.h>
 
 #include "SoloFunctionsModel.hh"
 //#include "RemoveAcMotion.cc" // This comes from an external library
@@ -24,6 +25,12 @@ using namespace std;
 SoloFunctionsModel::SoloFunctionsModel() {
   _boundaryMask = NULL;
   _boundaryMaskSet = false;
+  _boundaryMaskLength = 0;
+}
+
+void SoloFunctionsModel::ClearBoundaryMask() {
+  delete[] _boundaryMask;
+  _boundaryMask = NULL;
   _boundaryMaskLength = 0;
 }
 
@@ -101,20 +108,24 @@ void SoloFunctionsModel::SetDefaultMask(int rayIdx, int sweepIdx) {
   //  throw "Ray is null";
   //} 
 
+  if (rayIdx == 5298) {
+    cerr << "HERE!!! " << endl;
+  }
+
   //field = ray->getField(fieldName);
   size_t nGates = dataModel->getNGates(rayIdx); 
   LOG(DEBUG) << "there are nGates " << nGates;
 
-  if (nGates != _boundaryMaskLength) {
-    // clear old mask
-    if (_boundaryMask != NULL) {
-      delete[] _boundaryMask;
-    }
-
+  //if (nGates != _boundaryMaskLength) {
+  //  // clear old mask
+  //  if (_boundaryMask != NULL) {
+  //    delete[] _boundaryMask;
+  //  }
+  
     // allocate new mask
     _boundaryMaskLength = nGates;
     _boundaryMask = new bool[_boundaryMaskLength];
-  }
+  //}
 
   for (size_t i=0; i<nGates; i++) {
     _boundaryMask[i] = true;
@@ -152,9 +163,9 @@ void SoloFunctionsModel::SetBoundaryMaskOriginal(int rayIdx, int sweepIdx,
 
   // can we reuse the boundary mask?  
 
-  if (_boundaryMask != NULL) {
-    delete[] _boundaryMask;
-  }
+  //if (_boundaryMask != NULL) {
+  //  delete[] _boundaryMask;
+  //}
  
   //--------- END HERE ----------
 
@@ -447,10 +458,10 @@ string SoloFunctionsModel::ZeroMiddleThird(string fieldName,  // RadxVol *vol,
     newData[i] = data[i];   
 
   // insert new field into RadxVol                                                                             
-  cerr << "result = ";
+  LOG(DEBUG) << "result = ";
   for (int i=0; i<50; i++)
-    cerr << newData[i] << ", ";
-  cerr << endl;
+    LOG(DEBUG) << newData[i] << ", ";
+  
 
   // I have the ray, can't I just add a field to it?
 
@@ -595,10 +606,10 @@ string SoloFunctionsModel::ZeroInsideBoundary(string fieldName,  //RadxVol *vol,
 
 
   // insert new field into RadxVol                                                                             
-  cerr << "result = ";
+  LOG(DEBUG) << "result = ";
   for (int i=0; i<50; i++)
-    cerr << newData[i] << ", ";
-  cerr << endl;
+    LOG(DEBUG) << newData[i] << ", ";
+  
 
   Radx::fl32 missingValue = Radx::missingFl32; 
   bool isLocal = false;
@@ -669,18 +680,23 @@ string SoloFunctionsModel::Despeckle(string fieldName,  //RadxVol *vol,
 
   // cerr << "there arenGates " << nGates;
   const float *data = field->getDataFl32();
+
+  Radx::fl32 missingValue = field->getMissingFl32();
+  if (bad_data_value == FLT_MIN) {
+    bad_data_value = missingValue;
+  }  
   
   // perform the function ...
   soloFunctionsApi.Despeckle(data,  newData, nGates, bad_data_value, speckle_length,
 			     clip_gate, _boundaryMask);
 
   // insert new field into RadxVol                                                                             
-  cerr << "result = ";
+  LOG(DEBUG) << "result = ";
   for (int i=0; i<50; i++)
-    cerr << newData[i] << ", ";
-  cerr << endl;
+    LOG(DEBUG) << newData[i] << ", ";
 
-  Radx::fl32 missingValue = Radx::missingFl32; 
+
+  // Radx::fl32 missingValue = Radx::missingFl32; 
   bool isLocal = false;
 
   //RadxField *newField = new RadxField(newFieldName, "m/s");
@@ -835,6 +851,11 @@ string SoloFunctionsModel::RemoveAircraftMotion(string fieldName, //RadxVol *vol
 
   // cerr << "there arenGates " << nGates;
   const float *data = field->getDataFl32();
+
+  Radx::fl32 missingValue = field->getMissingFl32();
+  if (bad_data_value == FLT_MIN) {
+    bad_data_value = missingValue;
+  }
   
   //==========
 
@@ -870,7 +891,7 @@ string SoloFunctionsModel::RemoveAircraftMotion(string fieldName, //RadxVol *vol
   cerr << endl;
   */
   
-  Radx::fl32 missingValue = Radx::missingFl32; 
+  //Radx::fl32 missingValue = Radx::missingFl32; 
   bool isLocal = false;
 
   //RadxField *newField = new RadxField(newFieldName, "m/s");
@@ -958,6 +979,11 @@ string SoloFunctionsModel::BBUnfoldFirstGoodGate(string fieldName, //RadxVol *vo
   if (firstRayInSweep) {
     // reset the running average?
     last_good_v0 = missingValue;
+  }
+  // if bad data value is not set, i.e. still the default value
+  // then set the bad data value to the missing value from the data
+  if (bad_data_value == FLT_MIN) {
+    bad_data_value = missingValue;
   }
  
   LOG(DEBUG) << "args: ";
@@ -1091,6 +1117,9 @@ string SoloFunctionsModel::BBUnfoldAircraftWind(string fieldName, //RadxVol *vol
   const float *data = field->getDataFl32();
 
   float missingValue = field->getMissingFl32();
+  if (bad_data_value == FLT_MIN) {
+    bad_data_value = missingValue;
+  }
  
   LOG(DEBUG) << "args: ";
   LOG(DEBUG) << "nyquist_velocity=" << nyquist_velocity;
@@ -1222,7 +1251,10 @@ string SoloFunctionsModel::BBUnfoldLocalWind(string fieldName, // RadxVol *vol,
   // and perpetuated for each ray in the sweep
   static float last_good_v0;
   float missingValue = field->getMissingFl32();
- 
+  if (bad_data_value == FLT_MIN) {
+    bad_data_value = missingValue;
+  } 
+
   LOG(DEBUG) << "args: ";
   LOG(DEBUG) << "nyquist_velocity=" << nyquist_velocity;
   LOG(DEBUG) << "dds_radd_eff_unamb_vel=" << dds_radd_eff_unamb_vel;
@@ -1611,8 +1643,8 @@ string SoloFunctionsModel::SetBadFlagsBetween(string fieldName,  // RadxVol *vol
 // return the temporary name for the new field in the volume
 string SoloFunctionsModel::RemoveRing(string fieldName,  // RadxVol *vol,
                 int rayIdx, int sweepIdx,
-                float lower_threshold,
-                float upper_threshold,
+                float lower_threshold, // in km
+                float upper_threshold, // in km
                 size_t clip_gate,
                 float bad_data_value,
                 string newFieldName) {
@@ -1649,21 +1681,49 @@ string SoloFunctionsModel::RemoveRing(string fieldName,  // RadxVol *vol,
       throw "Error: boundary mask and field gate dimension are not equal (SoloFunctionsModel)";
   }
 
+  // -- 
+  // translate upper and lower threshold from km to a gate index
+  double startRange;
+  double gateSpace;
+  dataModel->getPredomRayGeom(&startRange, &gateSpace);
+  size_t from_gate = 0;
+  if (lower_threshold > startRange) {
+    from_gate = ceil((lower_threshold - startRange) / gateSpace);
+    if (from_gate > nGates) {
+      string msg = "RemoveRing: lower_threshold exceeds number of gates; setting to max number of gates";
+      cerr << msg << endl;
+      from_gate = nGates;
+      //throw std::invalid_argument(msg);
+    }
+  }
+  size_t to_gate = 0;
+  if (upper_threshold > startRange) {
+    to_gate = ceil((upper_threshold - startRange) / gateSpace);
+    if (to_gate > nGates) {
+      string msg = "RemoveRing: upper_threshold exceeds number of gates; setting to max number of gates";
+      cerr << msg << endl;
+      to_gate = nGates;
+      //throw std::invalid_argument(msg);
+    }
+  }
+  //----
+
   // // cerr << "there arenGates " << nGates;
   const float *data = field->getDataFl32();
-  
+  Radx::fl32 missingValue = field->getMissingFl32();
+
   // TODO: data, _boundaryMask, and newData should have all the same dimensions = nGates
   SoloFunctionsApi soloFunctionsApi;
   
   //---- end insert ...
 
   // perform the function ...
-  soloFunctionsApi.RemoveRing(lower_threshold, upper_threshold,  
+  soloFunctionsApi.RemoveRing(from_gate, to_gate,  
               data, newData, nGates,
-              bad_data_value, clip_gate,
+              missingValue, clip_gate,
               _boundaryMask);
 
-  Radx::fl32 missingValue = Radx::missingSi08; 
+  //Radx::fl32 missingValue = Radx::missingSi08; 
   bool isLocal = false;
 
   //RadxField *newField = new RadxField(newFieldName, "m/s");
@@ -2603,6 +2663,68 @@ string SoloFunctionsModel::ForceUnfolding(string fieldName,   int rayIdx, int sw
 
 }
 
+string SoloFunctionsModel::UnconditionalDelete(string fieldName,  int rayIdx, int sweepIdx,
+             size_t clip_gate, float bad_data_value) {
+
+   SoloFunctionsApi api;
+
+  LOG(DEBUG) << "entry with fieldName ... " << fieldName << " radIdx=" << rayIdx
+       << " sweepIdx=" << sweepIdx;
+
+  DataModel *dataModel = DataModel::Instance();
+  
+  const RadxField *field;
+
+  //  get the ray for this field 
+  const vector<RadxRay *>  &rays = dataModel->getRays();
+  if (rays.size() > 1) {
+    LOG(DEBUG) <<  "ERROR - more than one ray; expected only one";
+  }
+  RadxRay *ray = rays.at(rayIdx);
+  if (ray == NULL) {
+    LOG(DEBUG) << "ERROR - ray is NULL";
+    throw "Ray is null";
+  } 
+
+  // get the data (in) and create space for new data (out)  
+  field = fetchDataField(ray, fieldName);
+  size_t nGates = ray->getNGates(); 
+
+  // create new data field for return 
+  float *newData = new float[nGates];
+
+  // data, _boundaryMask, and bad flag mask should have all the same dimensions = nGates
+  SoloFunctionsApi soloFunctionsApi;
+
+  if (_boundaryMaskSet) {
+    // verify dimensions on data in/out and boundary mask
+    if (nGates > _boundaryMaskLength)
+      throw "Error: boundary mask and field gate dimension are not equal (SoloFunctionsModel)";
+  }
+
+  // cerr << "there arenGates " << nGates;
+  const float *data = field->getDataFl32();
+
+  Radx::fl32 missingValue = field->getMissingFl32();
+
+  // perform the function ...
+  soloFunctionsApi.UnconditionalDelete(data, newData, nGates,
+          (float) missingValue, 
+          clip_gate, _boundaryMask);
+
+  bool isLocal = false;
+  string field_units = field->getUnits();
+
+  RadxField *field1 = ray->addField(fieldName, field_units, nGates, missingValue, newData, isLocal);
+
+  // get the name that was actually inserted ...
+  string tempFieldName = field1->getName();
+  tempFieldName.append("#");
+
+  return tempFieldName;
+
+}
+
 
 // Private methods 
 
@@ -2820,7 +2942,12 @@ string SoloFunctionsModel::_generalThresholdFx(string fieldName,  int rayIdx, in
 
   // cerr << "there arenGates " << nGates;
   const float *data = fieldData; // field->getDataFl32();
-  
+
+  Radx::fl32 missingValue = field->getMissingFl32();
+  if (bad_data_value == FLT_MIN) {
+    bad_data_value = missingValue;
+  }
+
   // perform the function ...
   //soloFunctionsApi.XorBadFlagsBetween(constantLower, constantUpper,
   //				      data, nGates, bad_data_value, clip_gate,
@@ -2831,7 +2958,7 @@ string SoloFunctionsModel::_generalThresholdFx(string fieldName,  int rayIdx, in
 
   bool isLocal = false;
   string field_units = "";
-  Radx::fl32 missingValue = Radx::missingFl32;
+  //Radx::fl32 missingValue = Radx::missingFl32;
   if (field != NULL) {
     field_units = field->getUnits();
     missingValue = field->getMissingFl32();
@@ -2958,9 +3085,9 @@ vector<double> SoloFunctionsModel::RemoveAircraftMotion(vector<double> data) { /
 
 
 void SoloFunctionsModel::printBoundaryMask() {
-  cout << "Boundary Mask ... Length = " << _boundaryMaskLength << endl;
+  LOG(DEBUG) << "Boundary Mask ... Length = " << _boundaryMaskLength;
   for (int i=0; i<_boundaryMaskLength; i++)
-    cout << _boundaryMask[i] << ", ";
+    LOG(DEBUG) << _boundaryMask[i] << ", ";
 }
 
 RadxField *SoloFunctionsModel::fetchDataField(RadxRay *ray, string &fieldName) {

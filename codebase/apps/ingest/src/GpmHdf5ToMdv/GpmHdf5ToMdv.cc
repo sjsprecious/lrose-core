@@ -24,16 +24,16 @@
 ///////////////////////////////////////////////////////////////
 // GpmHdf5ToMdv.cc
 //
-// GpmHdf5ToMdv object
+// Mike Dixon, EOL, NCAR
+// P.O.Box 3000, Boulder, CO, 80307-3000, USA
 //
-// Mike Dixon, RAP, NCAR, P.O.Box 3000, Boulder, CO, 80307-3000, USA
-//
-// Oct 2008
+// May 2021
 //
 ///////////////////////////////////////////////////////////////
 //
-// GpmHdf5ToMdv reads McIdas data in NetCDF format, and
-// converts to MDV
+// GpmHdf5ToMdv reads GPM data in HDF5 format, and
+// converts to MDV.
+// Originally based on NcGeneric2Mdv.
 //
 ////////////////////////////////////////////////////////////////
 
@@ -41,6 +41,7 @@
 #include <toolsa/toolsa_macros.h>
 #include <toolsa/umisc.h>
 #include <toolsa/pmu.h>
+#include <toolsa/str.h>
 #include <toolsa/DateTime.hh>
 #include <toolsa/Path.hh>
 #include <toolsa/TaArray.hh>
@@ -218,7 +219,8 @@ int GpmHdf5ToMdv::_processFile(const char *input_path)
     _fileInfo = _readStringAttribute(root, "FileInfo", "RootAttr");
     _inputRecord = _readStringAttribute(root, "InputRecord", "RootAttr");
     _jaxaInfo = _readStringAttribute(root, "JAXAInfo", "RootAttr");
-    _navigationRecord = _readStringAttribute(root, "NavigationRecord", "RootAttr");
+    _navigationRecord = _readStringAttribute(root, "NavigationRecord",
+                                             "RootAttr");
     _history = _readStringAttribute(root, "history", "RootAttr");
     
     if (_params.debug >= Params::DEBUG_VERBOSE) {
@@ -239,7 +241,13 @@ int GpmHdf5ToMdv::_processFile(const char *input_path)
     // open the NS group
     
     Group ns(root.openGroup("NS"));
-    if (_readGroupNs(ns)) {
+    if (_readMetadata(ns)) {
+      return -1;
+    }
+
+    // read in the fields
+    
+    if (_readFields(ns)) {
       return -1;
     }
 
@@ -251,21 +259,6 @@ int GpmHdf5ToMdv::_processFile(const char *input_path)
     return -1;
   }
 
-  // interpolate dbz field onto latlon grid
-
-  _interpDbz();
-
-  // invert the gate levels because the radar gate data is stored
-  // top-down instead of bottom-up
-
-  _invertGateLevels();
-  
-  // optionally remap onto specified output grid
-  
-  if (_params.remap_gates_to_vert_levels) {
-    _remapVertLevels();
-  }
-
   // create output Mdvx file object
   
   DsMdvx mdvx;
@@ -275,22 +268,57 @@ int GpmHdf5ToMdv::_processFile(const char *input_path)
     
   // set master header
   
-  if (_setMasterHeader(mdvx)) {
-    return -1;
-  }
+  _setMasterHeader(mdvx);
   
-  // add the data fields
+  // interpolate fields onto latlon grid, and add to the mdvx object
+
+  for (size_t ifield = 0; ifield < _outputFields.size(); ifield++) {
+    
+    // get field as it was read in
+    
+    OutputField *fld = _outputFields[ifield];
+    if (!fld->valid) {
+      delete fld;
+      continue;
+    }
+    
+    // interpolate
+    
+    _interpField(fld);
+    
+    // for DBZ invert the gate levels because the radar gate data is stored
+    // top-down instead of bottom-up
+    
+    _invertDbzGateLevels(fld);
   
-  MdvxField *dbzField = _createMdvxField("DBZ",
-                                         "reflectivity",
-                                         "dBZ",
-                                         _nx, _ny, _nz,
-                                         _minxDeg, _minyDeg, _minzKm,
-                                         _dxDeg, _dyDeg, _dzKm,
-                                         _missingDbz,
-                                         _dbzOutput.data());
-  
-  mdvx.addField(dbzField);
+    // optionally remap onto specified output grid vlevels
+    
+    if (_params.remap_gates_to_vert_levels) {
+
+      // zlevels are specified
+      
+      _zLevels.resize(_params.output_z_levels_km_n);
+      for (int iz = 0; iz < _params.output_z_levels_km_n; iz++) {
+        _zLevels[iz] = _params._output_z_levels_km[iz];
+      }
+
+      _remapVertLevels(fld);
+
+    }
+
+    // add to mdvx object
+    
+    _addFieldToMdvx(mdvx, fld);
+
+    // delete the field
+
+    delete fld;
+
+  } // ifield
+    
+  // clean up
+
+  _outputFields.clear();
 
   // write output file
   
@@ -328,9 +356,9 @@ string GpmHdf5ToMdv::_readStringAttribute(Group &group,
 }
 
 //////////////////////////////////////////////
-// read the NS group
+// read the NS group metadata
 
-int GpmHdf5ToMdv::_readGroupNs(Group &ns)
+int GpmHdf5ToMdv::_readMetadata(Group &ns)
   
 {
 
@@ -355,52 +383,8 @@ int GpmHdf5ToMdv::_readGroupNs(Group &ns)
   if (_readQcFlags(ns)) {
     return -1;
   }
-  
-  if (_readReflectivity(ns)) {
-    return -1;
-  }
-  
-  return 0;
-
-#ifdef JUNK
-  Hdf5xx::DecodedAttr decodedAttr;
-
-  if (_utils.loadAttribute(what, "object", "root-what", decodedAttr)) {
-    _addErrStr(_utils.getErrStr());
-    return -1;
-  }
-  _objectStr = decodedAttr.getAsString();
-
-  if (_objectStr != "PVOL" && _objectStr != "SCAN" &&
-      _objectStr != "AZIM" && _objectStr != "ELEV") {
-    _addErrStr("Bad object type: ", _objectStr);
-    _addErrStr("  Must be 'PVOL','SCAN','AZIM'or'ELEV'");
-    return -1;
-  }
-
-  _utils.loadAttribute(what, "version", "root-what", decodedAttr);
-  _version = decodedAttr.getAsString();
-  
-  _utils.loadAttribute(what, "date", "root-what", decodedAttr);
-  _dateStr = decodedAttr.getAsString();
-  
-  _utils.loadAttribute(what, "time", "root-what", decodedAttr);
-  _timeStr = decodedAttr.getAsString();
-  
-  _utils.loadAttribute(what, "source", "root-what", decodedAttr);
-  _source = decodedAttr.getAsString();
-  
-  if (_debug) {
-    cerr  << "  root what _objectStr: " << _objectStr << endl;
-    cerr  << "  root what _version: " << _version << endl;
-    cerr  << "  root what _dateStr: " << _dateStr << endl;
-    cerr  << "  root what _timeStr: " << _timeStr << endl;
-    cerr  << "  root what _source: " << _source << endl;
-  }
 
   return 0;
-
-#endif
 
 }
 
@@ -418,43 +402,43 @@ int GpmHdf5ToMdv::_readTimes(Group &ns)
   
   vector<NcxxPort::si32> years, months, days, hours, mins, secs, msecs;
   Hdf5xx hdf5;
-  if (hdf5.readSi32Array(scanTime, "Year", "ScanTime",
+  if (hdf5.readSi32Array(scanTime, "Year",
                          dims, missingVal, years, units)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readTimes()" << endl;
     cerr << "  Cannot read Year variable" << endl;
     return -1;
   }
-  if (hdf5.readSi32Array(scanTime, "Month", "ScanTime",
+  if (hdf5.readSi32Array(scanTime, "Month",
                          dims, missingVal, months, units)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readTimes()" << endl;
     cerr << "  Cannot read Month variable" << endl;
     return -1;
   }
-  if (hdf5.readSi32Array(scanTime, "DayOfMonth", "ScanTime",
+  if (hdf5.readSi32Array(scanTime, "DayOfMonth",
                          dims, missingVal, days, units)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readTimes()" << endl;
     cerr << "  Cannot read DayOfMonth variable" << endl;
     return -1;
   }
-  if (hdf5.readSi32Array(scanTime, "Hour", "ScanTime",
+  if (hdf5.readSi32Array(scanTime, "Hour",
                          dims, missingVal, hours, units)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readTimes()" << endl;
     cerr << "  Cannot read Hour variable" << endl;
     return -1;
   }
-  if (hdf5.readSi32Array(scanTime, "Minute", "ScanTime",
+  if (hdf5.readSi32Array(scanTime, "Minute",
                          dims, missingVal, mins, units)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readTimes()" << endl;
     cerr << "  Cannot read Minute variable" << endl;
     return -1;
   }
-  if (hdf5.readSi32Array(scanTime, "Second", "ScanTime",
+  if (hdf5.readSi32Array(scanTime, "Second",
                          dims, missingVal, secs, units)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readTimes()" << endl;
     cerr << "  Cannot read Second variable" << endl;
     return -1;
   }
-  if (hdf5.readSi32Array(scanTime, "MilliSecond", "ScanTime",
+  if (hdf5.readSi32Array(scanTime, "MilliSecond",
                          dims, missingVal, msecs, units)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readTimes()" << endl;
     cerr << "  Cannot read MilliSecond variable" << endl;
@@ -512,33 +496,33 @@ int GpmHdf5ToMdv::_readQcFlags(Group &ns)
   _missingScan.resize(_times.size());
   
   Hdf5xx hdf5;
-  if (hdf5.readSi32Array(scanStatus, "dataQuality", "scanStatus",
+  if (hdf5.readSi32Array(scanStatus, "dataQuality",
                          dims, missingVal, _dataQuality, units)) {
     cerr << "WARNING - GpmHdf5ToMdv::_readQcFlags()" << endl;
     cerr << "  Cannot read dataQuality flag variable" << endl;
   }
-  if (hdf5.readSi32Array(scanStatus, "dataWarning", "scanStatus",
+  if (hdf5.readSi32Array(scanStatus, "dataWarning",
                          dims, missingVal, _dataWarning, units)) {
     cerr << "WARNING - GpmHdf5ToMdv::_readQcFlags()" << endl;
     cerr << "  Cannot read dataWarning flag variable" << endl;
   }
-  if (hdf5.readSi32Array(scanStatus, "geoError", "scanStatus",
+  if (hdf5.readSi32Array(scanStatus, "geoError",
                          dims, missingVal, _geoError, units)) {
     cerr << "WARNING - GpmHdf5ToMdv::_readQcFlags()" << endl;
     cerr << "  Cannot read geoError flag variable" << endl;
   }
-  if (hdf5.readSi32Array(scanStatus, "geoWarning", "scanStatus",
+  if (hdf5.readSi32Array(scanStatus, "geoWarning",
                          dims, missingVal, _geoWarning, units)) {
     cerr << "WARNING - GpmHdf5ToMdv::_readQcFlags()" << endl;
     cerr << "  Cannot read geoWarning flag variable" << endl;
   }
-  if (hdf5.readSi32Array(scanStatus, "limitErrorFlag", "scanStatus",
+  if (hdf5.readSi32Array(scanStatus, "limitErrorFlag",
                          dims, missingVal, _limitErrorFlag, units)) {
     cerr << "WARNING - GpmHdf5ToMdv::_readQcFlags()" << endl;
     cerr << "  Cannot read limitErrorFlag variable" << endl;
     return -1;
   }
-  if (hdf5.readSi32Array(scanStatus, "missing", "scanStatus",
+  if (hdf5.readSi32Array(scanStatus, "missing",
                          dims, missingVal, _missingScan, units)) {
     cerr << "WARNING - GpmHdf5ToMdv::_readQcFlags()" << endl;
     cerr << "  Cannot read missing flag variable" << endl;
@@ -577,7 +561,7 @@ int GpmHdf5ToMdv::_readLatLon(Group &ns)
   
   vector<size_t> latDims;
   string latUnits;
-  if (hdf5.readFl64Array(ns, "Latitude", "NS",
+  if (hdf5.readFl64Array(ns, "Latitude",
                          latDims, _missingLat, _lats, latUnits)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readLatLon()" << endl;
     cerr << "  Cannot read Latitude variable" << endl;
@@ -588,7 +572,7 @@ int GpmHdf5ToMdv::_readLatLon(Group &ns)
   
   vector<size_t> lonDims;
   string lonUnits;
-  if (hdf5.readFl64Array(ns, "Longitude", "NS",
+  if (hdf5.readFl64Array(ns, "Longitude",
                          lonDims, _missingLon, _lons, lonUnits)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readLatLon()" << endl;
     cerr << "  Cannot read Longitude variable" << endl;
@@ -708,7 +692,7 @@ int GpmHdf5ToMdv::_readSpaceCraftPos(Group &ns)
   vector<size_t> lonDims;
   NcxxPort::fl64 missingLon;
   string lonUnits;
-  if (hdf5.readFl64Array(nav, "scLon", "NS/navigation",
+  if (hdf5.readFl64Array(nav, "scLon",
                          lonDims, missingLon, _scLon, lonUnits)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readSpaceCraftPos()" << endl;
     cerr << "  Cannot read scLon variable" << endl;
@@ -720,7 +704,7 @@ int GpmHdf5ToMdv::_readSpaceCraftPos(Group &ns)
   vector<size_t> latDims;
   NcxxPort::fl64 missingLat;
   string latUnits;
-  if (hdf5.readFl64Array(nav, "scLat", "NS/navigation",
+  if (hdf5.readFl64Array(nav, "scLat",
                          latDims, missingLat, _scLat, latUnits)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readSpaceCraftPos()" << endl;
     cerr << "  Cannot read scLat variable" << endl;
@@ -732,7 +716,7 @@ int GpmHdf5ToMdv::_readSpaceCraftPos(Group &ns)
   vector<size_t> altDims;
   NcxxPort::fl64 missingAlt;
   string altUnits;
-  if (hdf5.readFl64Array(nav, "scAlt", "NS/navigation",
+  if (hdf5.readFl64Array(nav, "scAlt",
                          altDims, missingAlt, _scAlt, altUnits)) {
     cerr << "ERROR - GpmHdf5ToMdv::_readSpaceCraftPos()" << endl;
     cerr << "  Cannot read scAlt variable" << endl;
@@ -769,65 +753,220 @@ int GpmHdf5ToMdv::_readSpaceCraftPos(Group &ns)
 }
 
 //////////////////////////////////////////////
-// read the refectivity
+// read the fields
 
-int GpmHdf5ToMdv::_readReflectivity(Group &ns)
+int GpmHdf5ToMdv::_readFields(Group &ns)
+  
+{
+  
+  // create the field objects
+
+  _outputFields.clear();
+
+  for (int ifield = 0; ifield < _params.output_fields_n; ifield++) {
+    
+    Params::output_field_t &fldParams = _params._output_fields[ifield];
+
+    OutputField *fld = new OutputField(fldParams);
+
+    Group grp(ns.openGroup(fld->params.groupName));
+    if (fld->hdf5.getVarProps(grp, fld->params.gpmName,
+                              fld->dims, fld->units, 
+                              fld->h5class, fld->h5sign, fld->h5order, fld->h5size)) {
+      cerr << fld->hdf5.getErrStr() << endl;
+      delete fld;
+      continue;
+    }
+
+    // set interp type
+    
+    if (fld->h5class == H5T_INTEGER) {
+      fld->nearestNeighbor = true;
+    } else {
+      fld->nearestNeighbor = _params.interp_using_nearest_neighbor;
+    }
+
+    // debug print
+
+    if (_params.debug >= Params::DEBUG_VERBOSE) {
+      cerr << "Reading fields" << endl;
+      cerr << "  groupName: " << fld->params.groupName << endl;
+      cerr << "  gpmName: " << fld->params.gpmName << endl;
+      cerr << "  dims: ";
+      for (size_t ii = 0; ii < fld->dims.size(); ii++) {
+        cerr << fld->dims[ii];
+        if (ii == fld->dims.size() - 1) {
+          cerr << endl;
+        } else {
+          cerr << ", ";
+        }
+      }
+      if (fld->units.size() > 0) {
+        cerr << "  units: " << fld->units << endl;
+      }
+      if (fld->h5class == H5T_INTEGER) {
+        if (fld->h5sign == H5T_SGN_NONE) {
+          cerr << "  Is unsigned integer" << endl;
+        } else {
+          cerr << "  Is signed integer" << endl;
+        }
+      } else {
+        cerr << "  Is float" << endl;
+      }
+      if (fld->h5order == H5T_ORDER_LE) {
+        cerr << "  Byte order: little-endian" << endl;
+      } else {
+        cerr << "  Byte order: big-endian" << endl;
+      }
+      cerr << "  Byte len: " << fld->h5size << endl;
+    }
+
+    _outputFields.push_back(fld);
+    
+    // set number of gates
+    
+    if (fld->dims.size() == 3) {
+      _nGates = fld->dims[2];
+      _zLevels.resize(_nGates);
+      for (size_t iz = 0; iz < _nGates; iz++) {
+        _zLevels[iz] = _minzKm + iz * _dzKm;
+      }
+    }
+    
+  } // ifield
+
+  // read in the fields
+  
+  for (size_t ifield = 0; ifield < _outputFields.size(); ifield++) {
+    
+    OutputField *fld = _outputFields[ifield];
+    if (fld->h5class == H5T_INTEGER && fld->h5size == 2) {
+
+      // 16-bit integer
+
+      if (fld->dims.size() == 2) {
+        // 2D field
+        if (_readField2D(ns,
+                         fld->params.groupName,
+                         fld->params.gpmName,
+                         fld->si16Input,
+                         fld->si16Missing,
+                         fld->units) == 0) {
+          fld->valid = true;
+        }
+      } else {
+        // 3D field
+        if (_readField3D(ns,
+                         fld->params.groupName,
+                         fld->params.gpmName,
+                         fld->si16Input,
+                         fld->si16Missing,
+                         fld->units) == 0) {
+          fld->valid = true;
+        }
+      } // if (fld->dims.size() == 2)
+      
+    } else { // if (fld->h5class == H5T_INTEGER && fld->h5size == 2) {
+
+      // read as floats
+
+      if (fld->dims.size() == 2) {
+        // 2D field
+        if (_readField2D(ns,
+                         fld->params.groupName,
+                         fld->params.gpmName,
+                         fld->fl32Input,
+                         fld->fl32Missing,
+                         fld->units) == 0) {
+          fld->valid = true;
+        }
+      } else {
+        // 3D field
+        if (_readField3D(ns,
+                         fld->params.groupName,
+                         fld->params.gpmName,
+                         fld->fl32Input,
+                         fld->fl32Missing,
+                         fld->units) == 0) {
+          fld->valid = true;
+        }
+      } // if (fld->dims.size() == 2)
+      
+    } // if (fld->h5class == H5T_INTEGER && fld->h5size == 2) {
+    
+  } // ifield
+  
+  return 0;
+
+}
+
+//////////////////////////////////////////////
+// read 3D float field
+
+int GpmHdf5ToMdv::_readField3D(Group &ns,
+                               const string &groupName,
+                               const string &fieldName,
+                               vector<NcxxPort::fl32> &vals,
+                               NcxxPort::fl32 &missingVal,
+                               string &units)
   
 {
   
   Hdf5xx hdf5;
-
+  
   // read Latitude
   
-  vector<size_t> dbzDims;
-  
-  Group slv(ns.openGroup("SLV"));
-  if (hdf5.readFl32Array(slv, "zFactorCorrected", "NS/SLV",
-                         dbzDims, _missingDbz, _dbzInput, _dbzUnits)) {
-    cerr << "ERROR - GpmHdf5ToMdv::_readReflectivity()" << endl;
-    cerr << "  Cannot read zFactorCorrected variable" << endl;
+  vector<size_t> dims;
+  Group grp(ns.openGroup(groupName));
+  if (hdf5.readFl32Array(grp, fieldName,
+                         dims, missingVal, vals, units)) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField3D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
     return -1;
   }
 
   // check dimensions for consistency
   
-  if (dbzDims.size() != 3) {
-    cerr << "ERROR - GpmHdf5ToMdv::_readReflectivity()" << endl;
+  if (dims.size() != 3) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField3D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
     cerr << "  zFactorCorrected must have 3 dimensions" << endl;
-    cerr << "  dbzDims.size(): " << dbzDims.size() << endl;
+    cerr << "  dims.size(): " << dims.size() << endl;
     return -1;
   }
-  if (dbzDims[0] != _nScans || dbzDims[1] != _nRays) {
-    cerr << "ERROR - GpmHdf5ToMdv::_readReflectivity()" << endl;
-    cerr << "  DBZ dimensions must match nScans and nRays" << endl;
-    cerr << "  dbzDims[0]: " << dbzDims[0] << endl;
-    cerr << "  dbzDims[1]: " << dbzDims[1] << endl;
+  if (dims[0] != _nScans || dims[1] != _nRays) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField3D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
+    cerr << "  dimensions must match nScans and nRays" << endl;
+    cerr << "  dims[0]: " << dims[0] << endl;
+    cerr << "  dims[1]: " << dims[1] << endl;
     cerr << "  _nScans: " << _nScans << endl;
     cerr << "  _nRays: " << _nRays << endl;
     return -1;
   }
 
-  _nGates = dbzDims[2];
+  _nGates = dims[2];
   _nz = _nGates;
   _minzKm = _params.radar_min_z_km;
   _dzKm = _params.radar_delta_z_km;
 
   if (_params.debug >= Params::DEBUG_VERBOSE) {
-    cerr << "====>> Read DBZ <<====" << endl;
+    cerr << "====>> Read 3D fl32 group/field: " 
+         << groupName << "/" << fieldName << " <<====" << endl;
     cerr << "  nScans, nRays, nGates: " 
          << _nScans << ", " << _nRays << ", " << _nGates << endl;
-    cerr << "  missingDbz: " << _missingDbz << endl;
+    cerr << "  missingVal: " << missingVal << endl;
     if (_params.debug >= Params::DEBUG_EXTRA) {
       for (size_t iscan = 0; iscan < _nScans; iscan++) {
         for (size_t iray = 0; iray < _nRays; iray++) {
           for (size_t igate = 0; igate < _nGates; igate++) {
             size_t ipt = iscan * _nRays * _nGates + iray * _nGates + igate;
-            if (_dbzInput[ipt] != _missingDbz) {
-              cerr << "  iscan, iray, igate, dbz: "
+            if (vals[ipt] != missingVal) {
+              cerr << "  iscan, iray, igate, val: "
                    << iscan << ", "
                    << iray << ", "
                    << igate << ", "
-                   << _dbzInput[ipt] << endl;
+                   << vals[ipt] << endl;
             }
           } // igate
         } // iray
@@ -840,36 +979,304 @@ int GpmHdf5ToMdv::_readReflectivity(Group &ns)
 }
 
 //////////////////////////////////////////////
-// interpolate the reflectivity
+// read 3D int32 field
 
-void GpmHdf5ToMdv::_interpDbz()
+int GpmHdf5ToMdv::_readField3D(Group &ns,
+                               const string &groupName,
+                               const string &fieldName,
+                               vector<NcxxPort::si16> &vals,
+                               NcxxPort::si16 &missingVal,
+                               string &units)
+  
+{
+  
+  Hdf5xx hdf5;
+  
+  // read Latitude
+  
+  vector<size_t> dims;
+  Group grp(ns.openGroup(groupName));
+  if (hdf5.readSi16Array(grp, fieldName,
+                         dims, missingVal, vals, units)) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField3D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
+    return -1;
+  }
+
+  // check dimensions for consistency
+  
+  if (dims.size() != 3) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField3D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
+    cerr << "  zFactorCorrected must have 3 dimensions" << endl;
+    cerr << "  dims.size(): " << dims.size() << endl;
+    return -1;
+  }
+  if (dims[0] != _nScans || dims[1] != _nRays) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField3D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
+    cerr << "  dimensions must match nScans and nRays" << endl;
+    cerr << "  dims[0]: " << dims[0] << endl;
+    cerr << "  dims[1]: " << dims[1] << endl;
+    cerr << "  _nScans: " << _nScans << endl;
+    cerr << "  _nRays: " << _nRays << endl;
+    return -1;
+  }
+
+  _nGates = dims[2];
+  _nz = _nGates;
+  _minzKm = _params.radar_min_z_km;
+  _dzKm = _params.radar_delta_z_km;
+
+  if (_params.debug >= Params::DEBUG_VERBOSE) {
+    cerr << "====>> Read 3D int 32 group/field: " 
+         << groupName << "/" << fieldName << " <<====" << endl;
+    cerr << "  nScans, nRays, nGates: " 
+         << _nScans << ", " << _nRays << ", " << _nGates << endl;
+    cerr << "  missingVal: " << missingVal << endl;
+    if (_params.debug >= Params::DEBUG_EXTRA) {
+      for (size_t iscan = 0; iscan < _nScans; iscan++) {
+        for (size_t iray = 0; iray < _nRays; iray++) {
+          for (size_t igate = 0; igate < _nGates; igate++) {
+            size_t ipt = iscan * _nRays * _nGates + iray * _nGates + igate;
+            if (vals[ipt] != missingVal) {
+              cerr << "  iscan, iray, igate, val: "
+                   << iscan << ", "
+                   << iray << ", "
+                   << igate << ", "
+                   << vals[ipt] << endl;
+            }
+          } // igate
+        } // iray
+      } // iscan
+    } // extra
+  } // verbose
+  
+  return 0;
+
+}
+
+//////////////////////////////////////////////
+// read a 2D field - floats
+
+int GpmHdf5ToMdv::_readField2D(Group &ns,
+                               const string &groupName,
+                               const string &fieldName,
+                               vector<NcxxPort::fl32> &vals,
+                               NcxxPort::fl32 &missingVal,
+                               string &units)
+  
+{
+  
+  Hdf5xx hdf5;
+
+  // read Latitude
+  
+  vector<size_t> dims;
+  
+  Group grp(ns.openGroup(groupName));
+  if (hdf5.readFl32Array(grp, fieldName,
+                         dims, missingVal, vals, units)) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField2D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
+    return -1;
+  }
+
+  // check dimensions for consistency
+  
+  if (dims.size() != 2) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField2D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
+    cerr << "  2D fields must have 2 dimensions" << endl;
+    cerr << "  dims.size(): " << dims.size() << endl;
+    return -1;
+  }
+  if (dims[0] != _nScans || dims[1] != _nRays) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField2D()" << endl;
+    cerr << "  Cannot read group/field: " << groupName << "/" << fieldName << endl;
+    cerr << "  dimensions must match nScans and nRays" << endl;
+    cerr << "  dims[0]: " << dims[0] << endl;
+    cerr << "  dims[1]: " << dims[1] << endl;
+    cerr << "  _nScans: " << _nScans << endl;
+    cerr << "  _nRays: " << _nRays << endl;
+    return -1;
+  }
+
+  if (_params.debug >= Params::DEBUG_VERBOSE) {
+    cerr << "====>> Read 2D fl32 group/field: "
+         << groupName << "/" << fieldName << " <<====" << endl;
+    cerr << "  nScans, nRays: " 
+         << _nScans << ", " << _nRays << endl;
+    cerr << "  missingVal: " << missingVal << endl;
+    if (_params.debug >= Params::DEBUG_EXTRA) {
+      for (size_t iscan = 0; iscan < _nScans; iscan++) {
+        for (size_t iray = 0; iray < _nRays; iray++) {
+          size_t ipt = iscan * _nRays + iray;
+          if (vals[ipt] != missingVal) {
+            cerr << "  iscan, iray, val: "
+                 << iscan << ", "
+                 << iray << ", "
+                 << vals[ipt] << endl;
+          }
+        } // iray
+      } // iscan
+    } // extra
+  } // verbose
+  
+  return 0;
+
+}
+
+//////////////////////////////////////////////
+// read a 2D field - int16s
+
+int GpmHdf5ToMdv::_readField2D(Group &ns,
+                               const string &groupName,
+                               const string &fieldName,
+                               vector<NcxxPort::si16> &vals,
+                               NcxxPort::si16 &missingVal,
+                               string &units)
+  
+{
+  
+  Hdf5xx hdf5;
+
+  // read Latitude
+  
+  vector<size_t> dims;
+  
+  Group grp(ns.openGroup(groupName));
+  
+  if (hdf5.readSi16Array(grp, fieldName,
+                         dims, missingVal, vals, units)) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField2D()" << endl;
+    cerr << "  Cannot read group/field: "
+         << groupName << "/" << fieldName << endl;
+    return -1;
+  }
+
+  // check dimensions for consistency
+  
+  if (dims.size() != 2) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField2D()" << endl;
+    cerr << "  Cannot read group/field: "
+         << groupName << "/" << fieldName << endl;
+    cerr << "  2D fields must have 2 dimensions" << endl;
+    cerr << "  dims.size(): " << dims.size() << endl;
+    return -1;
+  }
+  if (dims[0] != _nScans || dims[1] != _nRays) {
+    cerr << "ERROR - GpmHdf5ToMdv::_readField2D()" << endl;
+    cerr << "  Cannot read group/field: "
+         << groupName << "/" << fieldName << endl;
+    cerr << "  dimensions must match nScans and nRays" << endl;
+    cerr << "  dims[0]: " << dims[0] << endl;
+    cerr << "  dims[1]: " << dims[1] << endl;
+    cerr << "  _nScans: " << _nScans << endl;
+    cerr << "  _nRays: " << _nRays << endl;
+    return -1;
+  }
+
+  if (_params.debug >= Params::DEBUG_VERBOSE) {
+    cerr << "====>> Read 2D int16 group/field: "
+         << groupName << "/" << fieldName << " <<====" << endl;
+    cerr << "  nScans, nRays: " 
+         << _nScans << ", " << _nRays << endl;
+    cerr << "  missingVal: " << missingVal << endl;
+    if (_params.debug >= Params::DEBUG_EXTRA) {
+      for (size_t iscan = 0; iscan < _nScans; iscan++) {
+        for (size_t iray = 0; iray < _nRays; iray++) {
+          size_t ipt = iscan * _nRays + iray;
+          if (vals[ipt] != missingVal) {
+            cerr << "  iscan, iray, val: "
+                 << iscan << ", "
+                 << iray << ", "
+                 << vals[ipt] << endl;
+          }
+        } // iray
+      } // iscan
+    } // extra
+  } // verbose
+  
+  return 0;
+
+}
+
+//////////////////////////////////////////////
+// interpolate the fields
+
+void GpmHdf5ToMdv::_interpField(OutputField *fld)
+
+{
+
+  if (fld->si16Input.size() > 0) {
+
+    _interpField(fld->si16Input,
+                 fld->si16Missing,
+                 fld->si16Interp);
+
+    fld->si16Output = fld->si16Interp;
+
+  } else if (fld->fl32Input.size() > 0) {
+
+    _interpField(fld->fl32Input,
+                 fld->fl32Missing,
+                 fld->fl32Interp,
+                 fld->nearestNeighbor);
+
+    fld->fl32Output = fld->fl32Interp;
+
+  }
+  
+}
+
+//////////////////////////////////////////////
+// interpolate float field
+
+void GpmHdf5ToMdv::_interpField(vector<NcxxPort::fl32> &valsInput,
+                                NcxxPort::fl32 missingVal,
+                                vector<NcxxPort::fl32> &valsInterp,
+                                bool nearestNeighbor)
   
 {
 
-  // initialize dbz grid
+  // check for 2D field
 
-  size_t nOutput = _nx * _ny * _nz;
-  _dbzInterp.resize(nOutput);
+  bool is2D = false;
+  if (valsInput.size() == _nRays * _nScans) {
+    is2D = true;
+  }
+  size_t nz = _nz;
+  size_t nGates = _nGates;
+  if (is2D) {
+    nz = 1;
+    nGates = 1;
+  }
+  
+  // initialize grid
+
+  size_t nOutput = _nx * _ny * nz;
+  valsInterp.resize(nOutput);
   for (size_t ii = 0; ii < nOutput; ii++) {
-    _dbzInterp[ii] = _missingDbz;
+    valsInterp[ii] = missingVal;
   }
 
   // loop through the vertical levels
-
-  for (size_t iz = 0; iz < _nz; iz++) {
-
+  
+  for (size_t iz = 0; iz < nz; iz++) {
+    
     double zM = (_minzKm + iz * _dzKm) * 1000.0;
-
-    // load dbz input vals for this level
-
-    vector<vector<double> > dbzIn;
+    
+    // load input vals for this level
+    size_t nPtsScan = _nRays * nGates;
+    vector<vector<NcxxPort::fl32> > valsThisZ;
     for (size_t iscan = 0; iscan < _nScans; iscan++) {
-      vector<double> dbzScan;
+      vector<NcxxPort::fl32> valsScan;
       for (size_t iray = 0; iray < _nRays; iray++) {
-        size_t ipt = iscan * _nRays * _nGates + iray * _nGates + iz;
-        dbzScan.push_back(_dbzInput[ipt]);
+        size_t ipt = iscan * nPtsScan + iray * nGates + iz;
+        valsScan.push_back(valsInput[ipt]);
       } // iray
-      dbzIn.push_back(dbzScan);
+      valsThisZ.push_back(valsScan);
     } // iscan
     
     // loop through the input (scan, ray) grid
@@ -884,27 +1291,17 @@ void GpmHdf5ToMdv::_interpDbz()
         corners[2] = _getCornerLatLon(iscan + 1, iray + 1, zM);
         corners[3] = _getCornerLatLon(iscan + 1, iray, zM);
 
-        // dbz vals at corners
-        double dbz[4];
-        dbz[0] = dbzIn[iscan][iray];
-        dbz[1] = dbzIn[iscan][iray + 1];
-        dbz[2] = dbzIn[iscan + 1][iray + 1];
-        dbz[3] = dbzIn[iscan + 1][iray];
+        // vals at corners
+        NcxxPort::fl32 vals[4];
+        vals[0] = valsThisZ[iscan][iray];
+        vals[1] = valsThisZ[iscan][iray + 1];
+        vals[2] = valsThisZ[iscan + 1][iray + 1];
+        vals[3] = valsThisZ[iscan + 1][iray];
 
-        // check for valid DBZ
-        int nGood = 0;
-        for (int ii = 0; ii < 4; ii++) {
-          if (dbz[ii] != _missingDbz) {
-            nGood++;
-          }
-        }
-        if (nGood < 1) {
-          continue;
-        }
-        
         // interp for the output grid points inside the polygon
         
-        _interpInsidePolygon(corners, dbz, iz);
+        _interpInsidePolygon(corners, vals, missingVal, 
+                             iz, valsInterp, nearestNeighbor);
         
       } // iray
     } // iscan
@@ -913,8 +1310,418 @@ void GpmHdf5ToMdv::_interpDbz()
 
 }
 
+//////////////////////////////////////////////
+// interpolate int 16 field
+
+void GpmHdf5ToMdv::_interpField(vector<NcxxPort::si16> &valsInput,
+                                NcxxPort::si16 missingVal,
+                                vector<NcxxPort::si16> &valsInterp)
+  
+{
+
+  // check for 2D field
+
+  bool is2D = false;
+  if (valsInput.size() == _nRays * _nScans) {
+    is2D = true;
+  }
+  size_t nz = _nz;
+  size_t nGates = _nGates;
+  if (is2D) {
+    nz = 1;
+    nGates = 1;
+  }
+  
+  // initialize grid
+
+  size_t nOutput = _nx * _ny * nz;
+  valsInterp.resize(nOutput);
+  for (size_t ii = 0; ii < nOutput; ii++) {
+    valsInterp[ii] = missingVal;
+  }
+
+  // loop through the vertical levels
+
+  for (size_t iz = 0; iz < nz; iz++) {
+
+    double zM = (_minzKm + iz * _dzKm) * 1000.0;
+    
+    // load input vals for this level
+    
+    vector<vector<NcxxPort::si16> > valsIn;
+    for (size_t iscan = 0; iscan < _nScans; iscan++) {
+      vector<NcxxPort::si16> valsScan;
+      for (size_t iray = 0; iray < _nRays; iray++) {
+        size_t ipt = iscan * _nRays * nGates + iray * nGates + iz;
+        valsScan.push_back(valsInput[ipt]);
+      } // iray
+      valsIn.push_back(valsScan);
+    } // iscan
+    
+    // loop through the input (scan, ray) grid
+
+    for (size_t iscan = 0; iscan < _nScans - 1; iscan++) {
+      for (size_t iray = 0; iray < _nRays - 1; iray++) {
+        
+        // corner locations adjusted for radar slant
+        Point_d corners[4];
+        corners[0] = _getCornerLatLon(iscan, iray, zM);
+        corners[1] = _getCornerLatLon(iscan, iray + 1, zM);
+        corners[2] = _getCornerLatLon(iscan + 1, iray + 1, zM);
+        corners[3] = _getCornerLatLon(iscan + 1, iray, zM);
+
+        // vals at corners
+        NcxxPort::si16 vals[4];
+        vals[0] = valsIn[iscan][iray];
+        vals[1] = valsIn[iscan][iray + 1];
+        vals[2] = valsIn[iscan + 1][iray + 1];
+        vals[3] = valsIn[iscan + 1][iray];
+
+        // interp for the output grid points inside the polygon
+        
+        _interpInsidePolygon(corners, vals, missingVal, iz, valsInterp);
+        
+      } // iray
+    } // iscan
+
+  } // iz
+
+}
+
+//////////////////////////////////////////////
+// interpolate points within polygon - floats
+
+void GpmHdf5ToMdv::_interpInsidePolygon(const Point_d *corners,
+                                        const NcxxPort::fl32 *vals,
+                                        NcxxPort::fl32 missingVal,
+                                        size_t iz,
+                                        vector<NcxxPort::fl32> &valsInterp,
+                                        bool nearestNeighbor)
+ 
+{
+
+  // check we have 4 valid corners
+  
+  for (int ii = 0; ii < 4; ii++) {
+    if (corners[ii].x == _missingLon ||
+        corners[ii].y == _missingLat) {
+      return;
+    }
+  }
+
+  // check we have valid data
+  
+  int nGood = 0;
+  for (int ii = 0; ii < 4; ii++) {
+    if (vals[ii] != missingVal) {
+      nGood++;
+    }
+  }
+  if (nGood == 0) {
+    return;
+  }
+
+  // compute the min/max grid indices
+
+  int minIx, maxIx, minIy, maxIy;
+  _computeMinMaxIndices(corners, minIx, maxIx, minIy, maxIy);
+
+  // loop through the output grid points, finding if they are inside the polygon
+
+  for (int iy = minIy; iy <= maxIy; iy++) {
+    for (int ix = minIx; ix <= maxIx; ix++) {
+      Point_d pt;
+      pt.x = _minxDeg + ix * _dxDeg;
+      pt.y = _minyDeg + iy * _dyDeg;
+      if (EGS_point_in_polygon(pt, (Point_d *) corners, 4)) {
+        double interpVal = _interpPt(pt, corners, vals,
+                                     missingVal, nearestNeighbor);
+        size_t outputIndex = iz * _nx * _ny + iy * _nx + ix;
+        valsInterp[outputIndex] = interpVal;
+      }
+    } // ix
+  } // iy
+
+}
+
+//////////////////////////////////////////////
+// interpolate points within polygon - int 32
+
+void GpmHdf5ToMdv::_interpInsidePolygon(const Point_d *corners,
+                                        const NcxxPort::si32 *vals,
+                                        NcxxPort::si32 missingVal,
+                                        size_t iz,
+                                        vector<NcxxPort::si32> &valsInterp)
+ 
+{
+
+  // check we have 4 valid corners
+  
+  for (int ii = 0; ii < 4; ii++) {
+    if (corners[ii].x == _missingLon ||
+        corners[ii].y == _missingLat) {
+      return;
+    }
+  }
+
+  // check we have valid data
+  
+  int nGood = 0;
+  for (int ii = 0; ii < 4; ii++) {
+    if (vals[ii] != missingVal) {
+      nGood++;
+    }
+  }
+  if (nGood == 0) {
+    return;
+  }
+  
+  // compute the min/max grid indices
+
+  int minIx, maxIx, minIy, maxIy;
+  _computeMinMaxIndices(corners, minIx, maxIx, minIy, maxIy);
+
+  // loop through the output grid points,
+  // finding if they are inside the polygon
+
+  for (int iy = minIy; iy <= maxIy; iy++) {
+    for (int ix = minIx; ix <= maxIx; ix++) {
+      Point_d pt;
+      pt.x = _minxDeg + ix * _dxDeg;
+      pt.y = _minyDeg + iy * _dyDeg;
+      if (EGS_point_in_polygon(pt, (Point_d *) corners, 4)) {
+        NcxxPort::si32 interpVal = _interpPt(pt, corners, vals, missingVal);
+        size_t outputIndex = iz * _nx * _ny + iy * _nx + ix;
+        valsInterp[outputIndex] = interpVal;
+      }
+    } // ix
+  } // iy
+
+}
+
+//////////////////////////////////////////////
+// interpolate points within polygon - int 16
+
+void GpmHdf5ToMdv::_interpInsidePolygon(const Point_d *corners,
+                                        const NcxxPort::si16 *vals,
+                                        NcxxPort::si16 missingVal,
+                                        size_t iz,
+                                        vector<NcxxPort::si16> &valsInterp)
+ 
+{
+
+  // check we have 4 valid corners
+  
+  for (int ii = 0; ii < 4; ii++) {
+    if (corners[ii].x == _missingLon ||
+        corners[ii].y == _missingLat) {
+      return;
+    }
+  }
+
+  // check we have valid data
+  
+  int nGood = 0;
+  for (int ii = 0; ii < 4; ii++) {
+    if (vals[ii] != missingVal) {
+      nGood++;
+    }
+  }
+  if (nGood == 0) {
+    return;
+  }
+  
+  // compute the min/max grid indices
+
+  int minIx, maxIx, minIy, maxIy;
+  _computeMinMaxIndices(corners, minIx, maxIx, minIy, maxIy);
+
+  // loop through the output grid points, finding if they are inside the polygon
+
+  for (int iy = minIy; iy <= maxIy; iy++) {
+    for (int ix = minIx; ix <= maxIx; ix++) {
+      Point_d pt;
+      pt.x = _minxDeg + ix * _dxDeg;
+      pt.y = _minyDeg + iy * _dyDeg;
+      if (EGS_point_in_polygon(pt, (Point_d *) corners, 4)) {
+        NcxxPort::si16 interpVal = _interpPt(pt, corners, vals, missingVal);
+        size_t outputIndex = iz * _nx * _ny + iy * _nx + ix;
+        valsInterp[outputIndex] = interpVal;
+      }
+    } // ix
+  } // iy
+
+}
+
+//////////////////////////////////////////////
+// compute the min/max indices in the grid
+// for the lat/lon corners
+
+void GpmHdf5ToMdv::_computeMinMaxIndices(const Point_d *corners,
+                                         int &minIx, int &maxIx,
+                                         int &minIy, int &maxIy) 
+
+{
+  
+  // compute lat/lon bounding box
+  
+  double minLat = corners[0].y;
+  double maxLat = corners[0].y;
+  double minLon = corners[0].x;
+  double maxLon = corners[0].x;
+  
+  for (int ii = 1; ii < 4; ii++) {
+    minLat = min(minLat, corners[ii].y);
+    maxLat = max(maxLat, corners[ii].y);
+    minLon = min(minLon, corners[ii].x);
+    maxLon = max(maxLon, corners[ii].x);
+  }
+  
+  // compute the output grid limits for the bounding box
+  
+  minIx = (int) ((minLon - _minxDeg) / _dxDeg);
+  maxIx = (int) ((maxLon - _minxDeg) / _dxDeg + 1.0);
+  
+  minIy = (int) ((minLat - _minyDeg) / _dyDeg);
+  maxIy = (int) ((maxLat - _minyDeg) / _dyDeg + 1.0);
+  
+  minIx = max(minIx, 0);
+  minIy = max(minIy, 0);
+  maxIx = min(maxIx, (int) _nx - 1);
+  maxIy = min(maxIy, (int) _ny - 1);
+
+}
+  
+//////////////////////////////////////////////
+// interpolate point within polygon - double
+
+NcxxPort::fl32 GpmHdf5ToMdv::_interpPt(const Point_d &pt,
+                                       const Point_d *corners,
+                                       const NcxxPort::fl32 *vals,
+                                       NcxxPort::fl32 missingVal,
+                                       bool nearestNeighbor)
+  
+{
+  
+  // compute the distances from the pt to the corners
+  
+  double dist[4];
+  for (int ii = 0; ii < 3; ii++) {
+    double dx = pt.x - corners[ii].x;
+    double dy = pt.y - corners[ii].y;
+    dist[ii] = sqrt(dx * dx + dy * dy);
+  }
+  
+  // nearest neighbor?
+
+  if (nearestNeighbor) {
+    double minDist = 1.0e99;
+    int minIndex = -1;
+    for (int ii = 0; ii < 3; ii++) {
+      if (dist[ii] < minDist) {
+        minDist = dist[ii];
+        if (vals[ii] != missingVal) {
+          minIndex = ii;
+        }
+      }
+    }
+    return vals[minIndex];
+  }
+  
+  // inverse distance weighted interpolation
+  
+  double weight[4];
+  double sumWt = 0.0;
+  double sumInterp = 0.0;
+  for (int ii = 0; ii < 3; ii++) {
+    if (vals[ii] != missingVal) {
+      weight[ii] = pow(1.0 / dist[ii], _params.interp_power_parameter);
+      sumWt += weight[ii];
+      sumInterp += weight[ii] * vals[ii];
+    }
+  }
+  double interpVal = sumInterp / sumWt;
+
+  return interpVal;
+
+}
+  
+//////////////////////////////////////////////
+// interpolate point within polygon - int 32
+// always uses nearest neighbor
+
+int GpmHdf5ToMdv::_interpPt(const Point_d &pt,
+                            const Point_d *corners,
+                            const NcxxPort::si32 *vals,
+                            int missingVal)
+  
+{
+  
+  // compute the distances from the pt to the corners
+  
+  double dist[4];
+  for (int ii = 0; ii < 3; ii++) {
+    double dx = pt.x - corners[ii].x;
+    double dy = pt.y - corners[ii].y;
+    dist[ii] = sqrt(dx * dx + dy * dy);
+  }
+
+  // find nearest
+
+  double minDist = 1.0e99;
+  int minIndex = -1;
+  for (int ii = 0; ii < 3; ii++) {
+    if (dist[ii] < minDist) {
+      minDist = dist[ii];
+      if (vals[ii] != missingVal) {
+        minIndex = ii;
+      }
+    }
+  }
+
+  return vals[minIndex];
+  
+}
+  
+//////////////////////////////////////////////
+// interpolate point within polygon - int 16
+// always uses nearest neighbor
+
+int GpmHdf5ToMdv::_interpPt(const Point_d &pt,
+                            const Point_d *corners,
+                            const NcxxPort::si16 *vals,
+                            int missingVal)
+  
+{
+  
+  // compute the distances from the pt to the corners
+  
+  double dist[4];
+  for (int ii = 0; ii < 3; ii++) {
+    double dx = pt.x - corners[ii].x;
+    double dy = pt.y - corners[ii].y;
+    dist[ii] = sqrt(dx * dx + dy * dy);
+  }
+
+  // find nearest
+
+  double minDist = 1.0e99;
+  int minIndex = -1;
+  for (int ii = 0; ii < 3; ii++) {
+    if (dist[ii] < minDist) {
+      minDist = dist[ii];
+      if (vals[ii] != missingVal) {
+        minIndex = ii;
+      }
+    }
+  }
+
+  return vals[minIndex];
+  
+}
+  
 /////////////////////////////////////////////////////////////////
-// get lat/lon of a grid corner,
+// get lat/lon of a grid corner, for given height (zM)
 // adjusting the corner locations for slant from radar to this point
 
 Point_d GpmHdf5ToMdv::_getCornerLatLon(int iscan,
@@ -930,6 +1737,9 @@ Point_d GpmHdf5ToMdv::_getCornerLatLon(int iscan,
   // get the point
   
   Point_d pt = _latLons[iscan][iray];
+  if (pt.x == _missingLon || pt.y == _missingLat) {
+    return pt;
+  }
   
   double cornerLat = pt.y;
   double slantDeltaLat = (_scLat[iscan] - cornerLat) * zFraction;
@@ -947,164 +1757,74 @@ Point_d GpmHdf5ToMdv::_getCornerLatLon(int iscan,
 
 }
 
+/////////////////////////////////////////////////////////////////
+// get lat/lon of a grid corner, at surface
 
-//////////////////////////////////////////////
-// interpolate points within polygon
+Point_d GpmHdf5ToMdv::_getCornerLatLon(int iscan,
+                                       int iray)
 
-void GpmHdf5ToMdv::_interpInsidePolygon(const Point_d *corners,
-                                        const double *dbz,
-                                        size_t iz)
-  
 {
-
-  // compute lat/lon bounding box
-  
-  double minLat = corners[0].y;
-  double maxLat = corners[0].y;
-  double minLon = corners[0].x;
-  double maxLon = corners[0].x;
-  
-  for (int ii = 1; ii < 4; ii++) {
-    minLat = min(minLat, corners[ii].y);
-    maxLat = max(maxLat, corners[ii].y);
-    minLon = min(minLon, corners[ii].x);
-    maxLon = max(maxLon, corners[ii].x);
-  }
-  
-  // compute the output grid limits for the bounding box
-  
-  int minIx = (int) ((minLon - _minxDeg) / _dxDeg);
-  int maxIx = (int) ((maxLon - _minxDeg) / _dxDeg + 1.0);
-  
-  int minIy = (int) ((minLat - _minyDeg) / _dyDeg);
-  int maxIy = (int) ((maxLat - _minyDeg) / _dyDeg + 1.0);
-  
-  minIx = max(minIx, 0);
-  minIy = max(minIy, 0);
-  maxIx = min(maxIx, (int) _nx - 1);
-  maxIy = min(maxIy, (int) _ny - 1);
-  
-  // loop through the output grid points, finding if they are inside the polygon
-
-  for (int iy = minIy; iy <= maxIy; iy++) {
-    for (int ix = minIx; ix <= maxIx; ix++) {
-      Point_d pt;
-      pt.x = _minxDeg + ix * _dxDeg;
-      pt.y = _minyDeg + iy * _dyDeg;
-      if (EGS_point_in_polygon(pt, (Point_d *) corners, 4)) {
-        double interpVal = _interpPt(pt, corners, dbz, iz);
-        size_t outputIndex = iz * _nx * _ny + iy * _nx + ix;
-        _dbzInterp[outputIndex] = interpVal;
-      }
-    } // ix
-  } // iy
-
+  return _latLons[iscan][iray];
 }
 
-//////////////////////////////////////////////
-// interpolate point within polygon
-
-double GpmHdf5ToMdv::_interpPt(const Point_d &pt,
-                               const Point_d *corners,
-                               const double *dbz,
-                               size_t iz)
-  
-{
-  
-  // compute the distances from the pt to the corners
-
-  double dist[4];
-  for (int ii = 0; ii < 3; ii++) {
-    double dx = pt.x - corners[ii].x;
-    double dy = pt.y - corners[ii].y;
-    dist[ii] = sqrt(dx * dx + dy * dy);
-  }
-
-  // nearest neighbor?
-
-  if (_params.interp_using_nearest_neighbor) {
-    double minDist = 1.0e99;
-    int minIndex = -1;
-    for (int ii = 0; ii < 3; ii++) {
-      if (dist[ii] < minDist) {
-        minDist = dist[ii];
-        if (dbz[ii] != _missingDbz) {
-          minIndex = ii;
-        }
-      }
-    }
-    return dbz[minIndex];
-  }
-  
-  double weight[4];
-  double sumWt = 0.0;
-  double sumInterp = 0.0;
-  for (int ii = 0; ii < 3; ii++) {
-    if (dbz[ii] != _missingDbz) {
-      weight[ii] = pow(1.0 / dist[ii], _params.interp_power_parameter);
-      sumWt += weight[ii];
-      sumInterp += weight[ii] * dbz[ii];
-    }
-  }
-  double interpDbz = sumInterp / sumWt;
-
-  return interpDbz;
-
-}
-  
 ////////////////////////////////////////////////////////
+// for DBZ 3D fields,
 // invert the height levels because the data is stored
 // with the top first and decreasing in height 
 
-void GpmHdf5ToMdv::_invertGateLevels()
+void GpmHdf5ToMdv::_invertDbzGateLevels(OutputField *fld)
 {
-
-  // prepare output grid
   
-  _dbzOutput.resize(_dbzInterp.size());
-  _zLevels.resize(_nz);
-  for (size_t iz = 0; iz < _nz; iz++) {
-    _zLevels[iz] = _minzKm + iz * _dzKm;
+  // check for reflectivity
+  
+  if (fld->units != "dBZ" && fld->units != "mm/hr") {
+    return;
   }
 
+  // check for 3D float field
+  
+  if (fld->dims.size() != 3) {
+    return;
+  }
+  if (fld->fl32Input.size() == 0) {
+    return;
+  }
+    
+  // prepare output grid
+    
+  fld->fl32Output.resize(fld->fl32Interp.size());
+  
   // invert vlevels
-
+  
   size_t nptsPlane = _nx * _ny;
   for (size_t iz = 0; iz < _nz; iz++) {
     for (size_t iy = 0; iy < _ny; iy++) {
       for (size_t ix = 0; ix < _nx; ix++) {
         size_t interpIndex = iz * nptsPlane + iy * _nx + ix;
         size_t outputIndex = (_nz - iz - 1) * nptsPlane + iy * _nx + ix;
-        _dbzOutput[outputIndex] = _dbzInterp[interpIndex];
+        fld->fl32Output[outputIndex] = fld->fl32Interp[interpIndex];
       } // ix
     } // iy
   } // iz
-
+  
 }
   
 ////////////////////////////////////////////////////////
+// for 3D fields,
 // remap the gates onto specified vertical levels
 // compute the max for the remapping
 
-void GpmHdf5ToMdv::_remapVertLevels()
+void GpmHdf5ToMdv::_remapVertLevels(OutputField *fld)
 {
-
-  _dbzInterp = _dbzOutput;
-
-  // zlevels are specified
-
-  _zLevels.resize(_params.output_z_levels_km_n);
-  for (int iz = 0; iz < _params.output_z_levels_km_n; iz++) {
-    _zLevels[iz] = _params._output_z_levels_km[iz];
+  
+  // check for 3D field
+  
+  if (fld->dims.size() != 3) {
+    return;
   }
-
-  // prepare output grid
-
-  size_t nPtsOutput = _nx * _ny * _zLevels.size();
-  _dbzOutput.resize(nPtsOutput);
-
+  
   // compute heights of mid pt between specified levels
-
+  
   vector<double> zMid;
   for (size_t ii = 0; ii < _zLevels.size() - 1; ii++) {
     zMid.push_back((_zLevels[ii] + _zLevels[ii+1]) / 2.0);
@@ -1120,26 +1840,73 @@ void GpmHdf5ToMdv::_remapVertLevels()
   for (size_t iz = 0; iz < _zLevels.size() - 1; iz++) {
     highIndex[iz] = (int) ((zMid[iz] - _minzKm) / _dzKm);
   }
+
+  if (fld->fl32Input.size() > 0) {
+    
+    // floats
+    
+    // save existing output in temp array
+    
+    vector<NcxxPort::fl32> outputOrig = fld->fl32Output;
+    
+    // prepare output grid
+    
+    size_t nPtsOutput = _nx * _ny * _zLevels.size();
+    fld->fl32Output.resize(nPtsOutput);
+    
+    // compute max val for specified vlevels
+    
+    size_t nptsPlane = _nx * _ny;
+    for (size_t iy = 0; iy < _ny; iy++) {
+      for (size_t ix = 0; ix < _nx; ix++) {
+        for (size_t iz = 0; iz < _zLevels.size(); iz++) {
+          NcxxPort::fl32 maxVal = fld->fl32Missing;
+          for (int jz = lowIndex[iz]; jz <= highIndex[iz]; jz++) {
+            size_t interpIndex = jz * nptsPlane + iy * _nx + ix;
+            if (outputOrig[interpIndex] != fld->fl32Missing) {
+              maxVal = max(maxVal, outputOrig[interpIndex]);
+            }
+          } // jz
+          size_t outputIndex = iz * nptsPlane + iy * _nx + ix;
+          fld->fl32Output[outputIndex] = maxVal;
+        } // iz
+      } // ix
+    } // iy
+    
+  } else if (fld->si16Input.size() > 0) {
+    
+    // ints
+    
+    // save existing output in temp array
+    
+    vector<NcxxPort::si16> outputOrig = fld->si16Output;
+    
+    // prepare output grid
+    
+    size_t nPtsOutput = _nx * _ny * _zLevels.size();
+    fld->si16Output.resize(nPtsOutput);
+    
+    // compute max val for specified vlevels
+    
+    size_t nptsPlane = _nx * _ny;
+    for (size_t iy = 0; iy < _ny; iy++) {
+      for (size_t ix = 0; ix < _nx; ix++) {
+        for (size_t iz = 0; iz < _zLevels.size(); iz++) {
+          NcxxPort::si16 maxVal = fld->si16Missing;
+          for (int jz = lowIndex[iz]; jz <= highIndex[iz]; jz++) {
+            size_t interpIndex = jz * nptsPlane + iy * _nx + ix;
+            if (outputOrig[interpIndex] != fld->si16Missing) {
+              maxVal = max(maxVal, outputOrig[interpIndex]);
+            }
+          } // jz
+          size_t outputIndex = iz * nptsPlane + iy * _nx + ix;
+          fld->si16Output[outputIndex] = maxVal;
+        } // iz
+      } // ix
+    } // iy
+    
+  } // else if (fld->si16Input.size() > 0)
   
-  // compute max dbz for specified vlevels
-
-  size_t nptsPlane = _nx * _ny;
-  for (size_t iy = 0; iy < _ny; iy++) {
-    for (size_t ix = 0; ix < _nx; ix++) {
-      for (size_t iz = 0; iz < _zLevels.size(); iz++) {
-        NcxxPort::fl32 maxDbz = _missingDbz;
-        for (int jz = lowIndex[iz]; jz <= highIndex[iz]; jz++) {
-          size_t interpIndex = jz * nptsPlane + iy * _nx + ix;
-          if (_dbzInterp[interpIndex] != _missingDbz) {
-            maxDbz = max(maxDbz, _dbzInterp[interpIndex]);
-          }
-        } // jz
-        size_t outputIndex = iz * nptsPlane + iy * _nx + ix;
-        _dbzOutput[outputIndex] = maxDbz;
-      } // iz
-    } // ix
-  } // iy
-
 }
   
 /////////////////////////////////////////////////
@@ -1147,7 +1914,7 @@ void GpmHdf5ToMdv::_remapVertLevels()
 //
 // Returns 0 on success, -1 on failure
 
-int GpmHdf5ToMdv::_setMasterHeader(DsMdvx &mdvx)
+void GpmHdf5ToMdv::_setMasterHeader(DsMdvx &mdvx)
 
 {
 
@@ -1174,12 +1941,60 @@ int GpmHdf5ToMdv::_setMasterHeader(DsMdvx &mdvx)
   mdvx.setDataSetSource("NASA-GPM");
   mdvx.setDataSetInfo(_history.c_str());
 
-  return 0;
-
 }
 
-///////////////////////////////
-// Create an Mdvx field
+///////////////////////////////////
+// Add the Mdvx fields
+
+void GpmHdf5ToMdv::_addFieldToMdvx(DsMdvx &mdvx,
+                                   OutputField *fld)
+
+{
+
+  int nz = _zLevels.size();
+  double minzKm = _zLevels[0];
+  if (fld->dims.size() == 2) {
+    nz = 1;
+  }
+  
+  if (fld->si16Output.size() > 0) {
+    
+    MdvxField *field = _createMdvxField(fld->params.outputName,
+                                        fld->params.longName,
+                                        fld->units,
+                                        _nx, _ny, nz,
+                                        _minxDeg, _minyDeg, minzKm,
+                                        _dxDeg, _dyDeg, _dzKm,
+                                        fld->si16Missing,
+                                        fld->si16Output.data());
+    
+    field->convertType((Mdvx::encoding_type_t) fld->params.encoding,
+                       Mdvx::COMPRESSION_GZIP);
+    
+    mdvx.addField(field);
+    
+  } else if (fld->fl32Output.size() > 0) {
+      
+    MdvxField *field = _createMdvxField(fld->params.outputName,
+                                        fld->params.longName,
+                                        fld->units,
+                                        _nx, _ny, nz,
+                                        _minxDeg, _minyDeg, minzKm,
+                                        _dxDeg, _dyDeg, _dzKm,
+                                        fld->fl32Missing,
+                                        fld->fl32Output.data());
+    
+    field->convertType((Mdvx::encoding_type_t) fld->params.encoding,
+                       Mdvx::COMPRESSION_GZIP);
+    
+    mdvx.addField(field);
+    
+  }
+  
+}
+      
+///////////////////////////////////
+// Create an Mdvx field - floats
 
 MdvxField *GpmHdf5ToMdv::_createMdvxField(const string &fieldName,
                                           const string &longName,
@@ -1202,6 +2017,7 @@ MdvxField *GpmHdf5ToMdv::_createMdvxField(const string &fieldName,
 
   Mdvx::field_header_t fhdr;
   MEM_zero(fhdr);
+  STRncopy(fhdr.field_name, fieldName.c_str(), MDV_SHORT_FIELD_LEN);
   
   // _inputProj.syncToFieldHdr(fhdr);
 
@@ -1212,7 +2028,11 @@ MdvxField *GpmHdf5ToMdv::_createMdvxField(const string &fieldName,
   fhdr.native_vlevel_type = Mdvx::VERT_TYPE_Z;
   fhdr.vlevel_type = Mdvx::VERT_TYPE_Z;
   fhdr.dz_constant = true;
-  fhdr.data_dimension = 3;
+  if (nz == 1) {
+    fhdr.data_dimension = 2;
+  } else {
+    fhdr.data_dimension = 3;
+  }
   
   fhdr.scale = 1.0;
   fhdr.bad_data_value = missingVal;
@@ -1224,7 +2044,7 @@ MdvxField *GpmHdf5ToMdv::_createMdvxField(const string &fieldName,
   
   fhdr.nx = nx;
   fhdr.ny = ny;
-  fhdr.nz = _zLevels.size();
+  fhdr.nz = nz;
 
   fhdr.volume_size = fhdr.nx * fhdr.ny * fhdr.nz * sizeof(fl32);
 
@@ -1239,7 +2059,7 @@ MdvxField *GpmHdf5ToMdv::_createMdvxField(const string &fieldName,
   Mdvx::vlevel_header_t vhdr;
   MEM_zero(vhdr);
   
-  for (size_t ii = 0; ii < _zLevels.size(); ii++) {
+  for (size_t ii = 0; ii < nz; ii++) {
     vhdr.type[ii] = Mdvx::VERT_TYPE_Z;
     vhdr.level[ii] = _zLevels[ii];
   }
@@ -1248,8 +2068,93 @@ MdvxField *GpmHdf5ToMdv::_createMdvxField(const string &fieldName,
   // converting data to encoding and compression types
   
   MdvxField *field = new MdvxField(fhdr, vhdr, vals);
-  field->convertType((Mdvx::encoding_type_t) _params.output_encoding_type,
-                     Mdvx::COMPRESSION_GZIP);
+
+  // set names etc
+  
+  field->setFieldName(fieldName);
+  field->setFieldNameLong(longName);
+  field->setUnits(units);
+  field->setTransform("");
+
+  return field;
+
+}
+  
+///////////////////////////////////
+// Create an Mdvx field - ints
+
+MdvxField *GpmHdf5ToMdv::_createMdvxField(const string &fieldName,
+                                          const string &longName,
+                                          const string &units,
+                                          size_t nx, size_t ny, size_t nz,
+                                          double minx, double miny, double minz,
+                                          double dx, double dy, double dz,
+                                          NcxxPort::si16 missingVal,
+                                          NcxxPort::si16 *vals)
+
+{
+
+  // check max levels
+
+  if (nz > MDV_MAX_VLEVELS) {
+    nz = MDV_MAX_VLEVELS;
+  }
+
+  // set up MdvxField headers
+
+  Mdvx::field_header_t fhdr;
+  MEM_zero(fhdr);
+  STRncopy(fhdr.field_name, fieldName.c_str(), MDV_SHORT_FIELD_LEN);
+  
+  // _inputProj.syncToFieldHdr(fhdr);
+
+  fhdr.compression_type = Mdvx::COMPRESSION_NONE;
+  fhdr.transform_type = Mdvx::DATA_TRANSFORM_NONE;
+  fhdr.scaling_type = Mdvx::SCALING_NONE;
+  
+  fhdr.native_vlevel_type = Mdvx::VERT_TYPE_Z;
+  fhdr.vlevel_type = Mdvx::VERT_TYPE_Z;
+  fhdr.dz_constant = true;
+  if (nz == 1) {
+    fhdr.data_dimension = 2;
+  } else {
+    fhdr.data_dimension = 3;
+  }
+  
+  fhdr.scale = 1.0;
+  fhdr.bad_data_value = missingVal;
+  fhdr.missing_data_value = missingVal;
+  
+  fhdr.proj_type = Mdvx::PROJ_LATLON;
+  fhdr.encoding_type = Mdvx::ENCODING_INT16;
+  fhdr.data_element_nbytes = sizeof(si16);
+  
+  fhdr.nx = nx;
+  fhdr.ny = ny;
+  fhdr.nz = nz;
+
+  fhdr.volume_size = fhdr.nx * fhdr.ny * fhdr.nz * sizeof(si16);
+
+  fhdr.grid_minx = minx;
+  fhdr.grid_miny = miny;
+  fhdr.grid_minz = minz;
+
+  fhdr.grid_dx = dx;
+  fhdr.grid_dy = dy;
+  fhdr.grid_dz = dz;
+  
+  Mdvx::vlevel_header_t vhdr;
+  MEM_zero(vhdr);
+  
+  for (size_t ii = 0; ii < nz; ii++) {
+    vhdr.type[ii] = Mdvx::VERT_TYPE_Z;
+    vhdr.level[ii] = _zLevels[ii];
+  }
+
+  // create MdvxField object
+  // converting data to encoding and compression types
+  
+  MdvxField *field = new MdvxField(fhdr, vhdr, vals);
 
   // set names etc
   

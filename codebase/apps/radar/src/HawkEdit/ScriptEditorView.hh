@@ -43,6 +43,8 @@ public:
   vector<string> *getVariablesFromScriptEditor();
   vector<float> *getDataForVariableFromScriptEditor(int column, string fieldName);
 
+  string getSaveEditsDirectory();
+
   //void setSelectionToValue(QString value);
   void closeEvent();
 
@@ -54,16 +56,27 @@ public slots:
     void cancelFormulaInput();
     void displayHelp();
     void scriptComplete();
-  //void clear();
+    void cancelScriptRun();
+    void undoEdits();
+    void redoEdits();
+    //void clear();
 
-  void notImplementedMessage();
+    void notImplementedMessage();
 
-  //void setupSoloFunctions(SoloFunctions *soloFunctions);
+    //void setupSoloFunctions(SoloFunctions *soloFunctions);
 
-  void fieldNamesProvided(vector<string> fieldNames);
-  //void fieldDataSent(vector<float> *data, int useless, int c);
+    void fieldNamesProvided(vector<string> fieldNames);
+    //void fieldDataSent(vector<float> *data, int useless, int c);
 
-  void applyChanges();
+    void applyChanges();
+    void currentSweepClicked(bool checked);
+    void allSweepsClicked(bool checked);
+    void timeRangeClicked(bool checked);
+    void changeOutputLocation(bool checked);
+
+
+  void hideTimeRangeEdits();
+  void showTimeRangeEdits();
 
   //  void printQJSEngineContext();
 
@@ -73,7 +86,13 @@ signals:
   //void needDataForField(string fieldName, int r, int c);
   void applyVolumeEdits();
   void runOneTimeOnlyScript(QString oneTimeOnlyScript);
-  void runForEachRayScript(QString forEachRayScript, bool useBoundary);
+  void runForEachRayScript(QString forEachRayScript, bool useBoundary,
+    bool useAllSweeps);
+  void runScriptBatchMode(QString script, bool useBoundary, 
+    bool useAllSweeps, bool useTimeRange);
+  void cancelScriptRunRequest();
+  void undoScriptEdits();
+  void redoScriptEdits();  
   void scriptEditorClosed();
 
 protected:
@@ -92,10 +111,14 @@ protected:
                         QString *cell1, QString *cell2, QString *outCell);
   */
   void criticalMessage(std::string message);
+  void scriptCompleteMessage();
 
   void openScriptFile();
   void importScriptFile();
   void saveScriptFile();
+  void saveEditDirectory();
+
+
 
 private:
 
@@ -107,9 +130,29 @@ private:
     QLabel *cellLabel;
     TextEdit *formulaInput;
     TextEdit *formulaInputForEachRay;
-    QCheckBox *useBoundaryWidget;
+    QPushButton *useBoundaryWidget;
+    //QRadioButton *applyToCurrentSweep;
+    //QRadioButton *applyToAllSweeps;
     QTreeView *helpView;
     QHBoxLayout *scriptEditLayout;
+
+    QPushButton *currentSweepToggleButton;
+    QPushButton *allSweepsToggleButton;
+    QGroupBox *scriptModifiers;
+
+    QPushButton *currentTimeToggleButton;
+    QPushButton *timeRangeToggleButton;
+    QDateTimeEdit *_archiveStartTimeEdit;
+    QDateTimeEdit *_archiveEndTimeEdit;
+    QLabel *saveEditsDirectory;
+    QPushButton *browseDirectoryButton;
+
+    QVBoxLayout *checkBoxLayout;
+    QWidget *scriptEditWidget;
+
+    QVBoxLayout *helpViewLayout;
+    QWidget *helpWidget;
+
     //QTextEdit *formulaInput;
   // ScriptEditorDelegate *formulaInput;
 

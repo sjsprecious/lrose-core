@@ -110,11 +110,12 @@ public:
     FILE_FORMAT_NSSL_MRD,     ///< NSSL MRD format for NOAA aircraft tail radars
     FILE_FORMAT_NOXP_NC,      ///< netcdf for OU NOXP
     FILE_FORMAT_EDGE_NC,      ///< EEC EDGE netcdf format
-    // FILE_FORMAT_NCXX,         ///< NetCDF CF RADIAL using Ncxx Classes
+    // FILE_FORMAT_NCXX,      ///< NetCDF CF RADIAL using Ncxx Classes
     FILE_FORMAT_CFRADIAL2,    ///< NetCDF CF RADIAL2
     FILE_FORMAT_CFARR,        ///< Chilbolton radars
     FILE_FORMAT_NIMROD,       ///< UK Met Office Polar NIMROD
-    FILE_FORMAT_NOAA_FSL      ///< NOAA Forecast Systems Lab NetCDF
+    FILE_FORMAT_NOAA_FSL,     ///< NOAA Forecast Systems Lab NetCDF
+    FILE_FORMAT_RAXPOL_NC     ///< netcdf for OU RAXPOL
   } file_format_t;
 
   /// write format for CfRadial
@@ -586,6 +587,17 @@ public:
   void setReadPreserveSweeps(bool val);
 
   /////////////////////////////////////////////////////////////////
+  /// Set flag to indicate that we want to preserve the
+  /// ray details in the file we read in.
+  /// This generally applies to SIGMET data - by default the
+  /// rays are ordered by time.
+  /// If this flag is true, the ray order in the
+  /// the raw data file is unchanged.
+  /// Defaults to false.
+
+  void setReadPreserveRays(bool val);
+
+  /////////////////////////////////////////////////////////////////
   /// Set flag to indicate that we want to compute the
   /// sweep angles using the VCP tables.
   /// This applies to NEXRAD data - by default we
@@ -918,6 +930,7 @@ protected:
   bool _readSetMaxRange; ///< remove gates beyond a given max range
   double _readMaxRangeKm; ///< max read range in km
   bool _readPreserveSweeps; ///< preserve sweeps as they are read in
+  bool _readPreserveRays; ///< preserve rays as they are read in
   bool _readComputeSweepAnglesFromVcpTables; ///< compute Sweep angles from VCP tables
   bool _readRemoveLongRange; ///< remove long range scans on read
   bool _readRemoveShortRange; ///< remove short range scans on read

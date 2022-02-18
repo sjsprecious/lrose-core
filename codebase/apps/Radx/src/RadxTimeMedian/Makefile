@@ -41,12 +41,10 @@ TARGET_FILE = RadxTimeMedian
 
 LOC_INCLUDES = $(NETCDF4_INCS)
 
-LOC_LIBS = \
-          -ldsdata -lradar -lFmq -lSpdb -lMdv  -ldsserver -ldidss \
-          -lRadx -lNcxx -lrapformats -leuclid -lrapmath \
-          -lphysics -ltoolsa -ldataport -ltdrp \
-          $(NETCDF4_LIBS) \
-          -lfftw3 -lbz2 -lz -lpthread
+LOC_LIBS = -lradar -lRadx -lSpdb -ldsserver \
+	-lrapformats -lrapmath -ldidss -ltoolsa \
+	-ltdrp -ldataport -lfftw3 $(NETCDF4_LIBS) \
+	-lbz2 -lz -lpthread
 
 LOC_LDFLAGS = $(NETCDF4_LDFLAGS)
 
@@ -57,6 +55,7 @@ HDRS = \
 
 CPPC_SRCS = \
 	Params.cc \
+	HeaderParams.cc \
 	Alg.cc \
 	Histo.cc \
 	Main.cc \
@@ -83,6 +82,9 @@ include $(LROSE_CORE_DIR)/build/make_include/lrose_make_c++_targets
 #
 
 include $(LROSE_CORE_DIR)/build/make_include/lrose_make_tdrp_c++_targets
+
+HeaderParams.cc: paramdef.header
+	tdrp_gen -f paramdef.header -c++ -class HeaderParams
 
 #
 # local targets

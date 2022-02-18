@@ -14,6 +14,7 @@
 #include <QSlider>
 #include <QListWidget>
 #include <QLabel>
+#include <QStatusBar>
 
 #include <list>
 
@@ -71,6 +72,8 @@ class BoundaryPointEditorView : public QDialog
 
 	void selectBoundaryTool(BoundaryToolType tool, int radius = 0);
 
+	void boundaryColorProvided(QColor color);
+
   int firstBoundaryIndex();
   int lastBoundaryIndex();
   void showBoundaryEditor();
@@ -87,15 +90,17 @@ class BoundaryPointEditorView : public QDialog
 	void userClickedCircleButton();
 	void userClickedBrushButton();
 
+	void boundaryColorChanged(QColor color);
+
 	//vector<Point> getPoints(string boundaryFilePath);
 
   void boundaryPointEditorClosed();
-  void clearBoundary(int boundaryIndex);  // TODO: still needs connection
+  void clearBoundary();
   void refreshBoundariesEvent();
 
   private:
 
-
+	void setColorOnButton(QPushButton *button, QColor color);
   	/*
 
 	vector<Point> getPoints(string boundaryFilePath);
@@ -135,6 +140,9 @@ class BoundaryPointEditorView : public QDialog
 
 	//BoundaryToolType currentTool = BoundaryToolType::brush;
 
+  QLabel *boundaryColorLabel;
+  QPushButton *boundaryColorButton;
+
   QPushButton *_boundaryEditorClearBtn;
   QPushButton *_boundaryEditorHelpBtn;
   QPushButton *_boundaryEditorSaveBtn;
@@ -146,6 +154,8 @@ class BoundaryPointEditorView : public QDialog
   bool forceHide = true;
   QSlider *_circleRadiusSlider;
   QSlider *_brushRadiusSlider;
+
+  QStatusBar *statusBar;
 
   const int nBoundaries = 5;
 
@@ -174,15 +184,17 @@ public slots:
   void polygonBtnBoundaryEditorClick();
   void circleBtnBoundaryEditorClick();
   void brushBtnBoundaryEditorClick();
-   void onBoundaryEditorListItemClicked(QListWidgetItem* item);
+  void onBoundaryEditorListItemClicked(QListWidgetItem* item);
+  void setBoundaryColor();
+
 //-  void _saveBoundaryEditorClick();
   void saveBoundaryEditorClick();
 
-
+  void notImplementedMessage();
+  
   //void _clearBoundaryEditorClick();
   //void onBoundaryEditorListItemClicked(QListWidgetItem* item);
   //void _saveBoundaryEditorClick();
-
 
 };
 

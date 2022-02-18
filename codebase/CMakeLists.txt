@@ -20,8 +20,8 @@ if(${CMAKE_VERSION} VERSION_GREATER "3.10.0")
   cmake_policy(SET CMP0071 NEW)
 endif()
 
-set(CMAKE_C_COMPILER_NAMES clang fcc gcc icc cc)
-set(CMAKE_CXX_COMPILER_NAMES clang++ FCC CC g++ icpc c++ cxx)
+set(CMAKE_C_COMPILER_NAMES clang gcc icc cc fcc)
+set(CMAKE_CXX_COMPILER_NAMES clang++ g++ icpc c++ cxx FCC CC)
 
 set(CMAKE_VERBOSE_MAKEFILE OFF)
 
@@ -48,6 +48,7 @@ if (DEFINED X11_X11_LIB)
 endif()
 find_package (HDF5)
 find_package (NETCDF)
+find_package (LROSE)
 if (DEFINED HDF5_hdf5_LIBRARY_RELEASE)
   get_filename_component(HDF5_INSTALL_PREFIX ${HDF5_hdf5_LIBRARY_RELEASE} DIRECTORY)
 endif()
@@ -96,6 +97,7 @@ endFunction()
 
 enable_testing()
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC ")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -std=c++11 ")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DNO_JASPER_LIB ")
 

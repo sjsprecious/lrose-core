@@ -116,19 +116,38 @@ class DLL_EXPORT PolarWidget : public QWidget
               const RadxPlatform &platform,
               //const vector<DisplayField *> &fields,
 	      DisplayFieldController *displayFieldController,
-              bool haveFilteredFields);
+              bool haveFilteredFields,
+              RayLocationController *rayLocationController);
   
   /**
    * @brief Destructor.
    */
 
-  virtual ~PolarWidget();
+  ~PolarWidget();
 
   /**
    * @brief Configure the PolarWidget for range.
    */
 
-  virtual void configureRange(double max_range) = 0;
+  void configureRange(double max_range);
+
+  QTransform *configureTextTransform();
+  QTransform *computeTextTransform(
+                    int widthPixels,
+                    int heightPixels,
+                    int leftMargin,
+                    int rightMargin,
+                    int topMargin,
+                    int bottomMargin,
+                    int colorScaleWidth,
+                    double xMinWorld,
+                    double yMinWorld,
+                    double xMaxWorld,
+                    double yMaxWorld,
+                    int axisTickLen,
+                    int nTicksIdeal,
+                    int textMargin);
+
 
   /**********************************************
    * turn on archive-style rendering - all fields
@@ -197,6 +216,8 @@ class DLL_EXPORT PolarWidget : public QWidget
     return _aspectRatio;
   }
 
+  void mapPixelToWorld(int x, int y, double *worldX, double *worldY);
+
   ////////////////
   // Qt signals //
   ////////////////
@@ -221,14 +242,14 @@ class DLL_EXPORT PolarWidget : public QWidget
 
   //void displayImage(const size_t field_num);
   void displayImage(string currentFieldName, double currentSweepAngle,
-    RayLocationController *rayLocationController, ColorMap &colorMap,
+    ColorMap &colorMap,
     QColor backgroundColor);
   //void imageReady(QImage *image);
   /**
    * set archive mode
    */
   
-  void setArchiveMode(bool archive_mode);
+  //void setArchiveMode(bool archive_mode);
 
   /**
    * @brief Unzoom the view.
@@ -270,6 +291,7 @@ class DLL_EXPORT PolarWidget : public QWidget
   //void addField(QString fieldName);
 
 
+  // sets _image 
   void showSelectedField();
 
  protected:
@@ -336,7 +358,7 @@ class DLL_EXPORT PolarWidget : public QWidget
 
   // overide refresh images
 
-  virtual void _refreshImages() = 0;
+ // void _refreshImages();
 
   /**
    * @brief The index of the field selected for display.
@@ -390,7 +412,7 @@ class DLL_EXPORT PolarWidget : public QWidget
 
   // archive mode
 
-  bool _archiveMode;
+  //bool _archiveMode;
 
   /**
    * @brief Last X,Y location of the mouse during mouse move events; used for
@@ -414,6 +436,8 @@ class DLL_EXPORT PolarWidget : public QWidget
    */
 
   QRubberBand *_rubberBand;
+  QRubberBand *_rubberBandRectangle;
+  QRubberBand *_rubberBandLine;
 
   /**
    * @brief The rubber band origin.
@@ -457,8 +481,13 @@ class DLL_EXPORT PolarWidget : public QWidget
   QTransform _zoomTransform;
   WorldPlot _zoomWorld;
 
-  QImage *_image;
+  // QImage *_image;
   
+
+  double _currentSweepAngle;
+  RayLocationController  *_rayLocationController;
+  ColorMap  _currentColorMap;
+  QColor _backgroundColor;
 
   ///////////////////////
   // Protected methods //
@@ -471,7 +500,20 @@ class DLL_EXPORT PolarWidget : public QWidget
    * @param[in] painter    Painter to use for rendering.
    */
 
-  virtual void _drawOverlays(QPainter &painter) = 0;
+  void _drawOverlays(QPainter &painter);
+
+  void drawColorScale(QPainter &painter);
+  void drawColorScaleFromWorldPlot(const ColorMap &colorMap,
+                               QPainter &painter,
+                               int unitsFontSize);
+
+  void drawAzimuthLines(QPainter &painter);
+
+  void drawGrid(QPainter &painter);
+
+  void drawRings(QPainter &painter);
+
+  void drawLegend(QPainter &painter);
 
   /**
    * @brief Determine a ring spacing which will give even distances, and
@@ -480,7 +522,7 @@ class DLL_EXPORT PolarWidget : public QWidget
    * @return Returns the ring spacing in kilometers.
    */
 
-  virtual void _setGridSpacing() = 0;
+  void _setGridSpacing();
 
   /**
    * @brief Initialize the full window transform to use for the widget.
@@ -489,7 +531,8 @@ class DLL_EXPORT PolarWidget : public QWidget
    */
 
   void _setTransform(const QTransform &transform);
-
+  void _translateTransform(double x, double y);
+  
   /////////////////////////////////
   // Overridden QtWidget methods //
   /////////////////////////////////
@@ -500,7 +543,7 @@ class DLL_EXPORT PolarWidget : public QWidget
    * @param[in] event   The mouse event.
    */
 
-  virtual void mouseMoveEvent(QMouseEvent* event);
+  void mouseMoveEvent(QMouseEvent* event) override;
 
   /**
    * @brief Capture mouse press event which signals the start of
@@ -509,7 +552,7 @@ class DLL_EXPORT PolarWidget : public QWidget
    * @param[in] event    The mouse press event.
    */
 
-  virtual void mousePressEvent(QMouseEvent* event);
+  void mousePressEvent(QMouseEvent* event) override;
 
   /**
    * @brief Capture mouse release event which signals the start of
@@ -518,7 +561,8 @@ class DLL_EXPORT PolarWidget : public QWidget
    * @param[in] event    The mouse event.
    */
 
-  virtual void mouseReleaseEvent(QMouseEvent* event);
+  void mouseReleaseEvent(QMouseEvent* event) override;
+  void mouseDoubleClickEvent(QMouseEvent *event) override;
 
   /**
    * @brief The method that is called when a repaint event is triggered.
@@ -526,7 +570,10 @@ class DLL_EXPORT PolarWidget : public QWidget
    * @param[in] event   The repaint event.
    */
 
-  void paintEvent(QPaintEvent *event);
+  void paintEvent(QPaintEvent *event) override;
+
+  //void setImage(QImage *image);
+  //Qimage *getImage();
 
   /**
    * @brief Handle a resize event. A timer is used to prevent refreshes until
@@ -539,7 +586,7 @@ class DLL_EXPORT PolarWidget : public QWidget
   
   //void smartBrush(int xPixel, int yPixel);
 
-  virtual void resizeEvent(QResizeEvent * event);
+  void resizeEvent(QResizeEvent * event) override;
 
   // reset the world coords
 
@@ -547,39 +594,36 @@ class DLL_EXPORT PolarWidget : public QWidget
 
   // rendering
 
-  void _performRendering();
+  //void _performRendering();
 
   // get ray closest to click point
 
-  virtual const RadxRay *_getClosestRay(double x_km, double y_km) = 0;
+  const RadxRay *_getClosestRay(double x_km, double y_km);
+
+  //void drawColorScaleLegend(QPainter &painter);
+  void _drawScreenText(QPainter &painter, 
+    const string &text,
+                                int text_x, int text_y,
+                                int flags);
 
   bool _dirty;
 
+  bool _boundaryTrackMouseMove;
+  
  public:
 
   
   //  virtual void ShowContextMenu(const QPoint &pos);
-  virtual void ShowContextMenu(const QPoint &pos, RadxVol *vol);
+  //virtual void ShowContextMenu(const QPoint &pos, RadxVol *vol);
   void setFont();
-  virtual void ExamineEdit(const RadxRay *closestRay);
+  //virtual void ExamineEdit(const RadxRay *closestRay);
   void notImplemented();
-  virtual void informationMessage();
+  void informationMessage();
   void errorMessage(string title, string message) {                                                    
     QMessageBox::information(this, QString::fromStdString(title), QString::fromStdString(message));                 
   }  
 
- public slots:
-
-  virtual void contextMenuCancel();
-  virtual void contextMenuParameterColors();
-  virtual void contextMenuView();
-  virtual void contextMenuEditor();
-  virtual void contextMenuExamine(); // const QPoint &pos);
-  virtual void contextMenuDataWidget();
-  virtual void contextMenuHistogram();
-
-  void imageReady(QImage *image);
-  
+ public slots:  
 
 };
 

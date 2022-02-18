@@ -50,6 +50,7 @@
 */
 
 BoundaryPointEditorModel::BoundaryPointEditorModel() {
+	currentTool = BoundaryToolType::polygon;
 	rootBoundaryDir = string(getenv("HOME")) + "/" + "HawkEditBoundaries";
 	LOG(DEBUG) << "rootBoundaryDir = " << rootBoundaryDir;
 }
@@ -237,7 +238,8 @@ void BoundaryPointEditorModel::moveNearestPointTo(float x, float y)
 	}
 }
 
-// Return true if (x,y) is very close to any existing point
+// Return true if (x,y) is very close to any existing point 
+// in pixel space.
 // (relevant with the Polygon Tool)
 bool BoundaryPointEditorModel::isOverAnyPoint(float x, float y)
 {
@@ -269,7 +271,7 @@ bool BoundaryPointEditorModel::updateScale(double xRange)
 {
 	float newPointBoxScale = xRange / 450;  //450 is the default range/size if no radar data has been loaded
 	bool doUpdate = (newPointBoxScale != pointBoxScale);
-	pointBoxScale = newPointBoxScale;
+	//pointBoxScale = newPointBoxScale;
 	return(doUpdate);  //only do an update if this value has changed
 }
 
@@ -613,11 +615,16 @@ void BoundaryPointEditorModel::save(int boundaryIndex, string &selectedFieldName
 	Path fileName(path);
 	if (!fileName.pathExists()) {
 	  int result = fileName.makeDir();
-	  if (result < 0) throw std::runtime_error(std::strerror(errno));
+	  if (result < 0) {
+	  	string msg = std::strerror(errno);
+	    msg.append("Make sure the folder HawkEditBoundaries exists in your home directory.");
+	    throw std::runtime_error(msg);
+	  }
   }  
   LOG(DEBUG) << "saving to path: " << path;
 
 	save(path);
+	saveBoundaryColor(path);
 	LOG(DEBUG) << "exit";
 }
 
@@ -655,14 +662,39 @@ void BoundaryPointEditorModel::save(string &path)
 	fclose(file);
 }
 
+// Saves the current boundary color to a file with a path described above (top of this file)
+void BoundaryPointEditorModel::saveBoundaryColor(string path)
+{
+	LOG(DEBUG) << "entry ";
+
+	LOG(DEBUG) << "original path " << path;
+	path.append(boundaryColorExtension);
+	LOG(DEBUG) << "color path " << path;
+
+	ofstream outfile(path);
+	if (outfile.good()) {
+    outfile << currentBrushColor;
+  }
+  outfile.close();
+
+}
+
+// if boundaryIndex < 0, no saved boundary
 bool BoundaryPointEditorModel::load(int boundaryIndex, string &selectedFieldName,
  int sweepIndex, string &radarFilePath) 
 {
 	LOG(DEBUG) << "enter";
-  string path = getBoundaryFilePath(radarFilePath,
-    selectedFieldName, sweepIndex, boundaryIndex);
-  LOG(DEBUG) << "loading from path: " << path;
-	bool successful = load(path);
+	bool successful = true;
+	if (boundaryIndex > 0) {
+    string path = getBoundaryFilePath(radarFilePath,
+      selectedFieldName, sweepIndex, boundaryIndex);
+    LOG(DEBUG) << "loading from path: " << path;
+	  successful = load(path);
+	  bool successfulColor = loadBoundaryColor(path);
+  } else {
+  	// reset boundary to empty
+  	clear();
+  }
 	LOG(DEBUG) << "exit";
 	return successful;
 } 
@@ -714,6 +746,29 @@ bool BoundaryPointEditorModel::load(string path)
 			currentTool = BoundaryToolType::brush;
 		successful = true;
 	}
+	return successful;
+}
+
+// Loads the boundary file given by path
+// It also sets the correct editor tool (polygon, circle, or brush) based on what is in the file
+bool BoundaryPointEditorModel::loadBoundaryColor(string path)
+{
+	bool successful = false;
+
+	path.append(boundaryColorExtension);
+
+	ifstream infile(path);
+	if (infile.good())
+	{
+    string color;
+		infile >> color; 
+		if (color.length() > 0) {
+			currentBrushColor = color;
+			successful = true;
+    }
+	}
+	infile.close();
+
 	return successful;
 }
 
@@ -877,7 +932,7 @@ const char *BoundaryPointEditorModel::refreshBoundary(
 }
 
 
-bool BoundaryPointEditorModel::evaluatePoint(int worldX, int worldY)
+bool BoundaryPointEditorModel::moveBoundaryPoint(int startX, int startY, int worldX, int worldY)
 {
   bool redraw = false;
 
@@ -885,7 +940,7 @@ bool BoundaryPointEditorModel::evaluatePoint(int worldX, int worldY)
     
     if (currentTool == BoundaryToolType::polygon && 
         isAClosedPolygon() && 
-        isOverAnyPoint(worldX, worldY)) {
+        isOverAnyPoint(startX, startY)) { // worldX, worldY)) {
       moveNearestPointTo(worldX, worldY);
       redraw = true;
     } else if (currentTool == BoundaryToolType::brush) {
@@ -913,7 +968,7 @@ void BoundaryPointEditorModel::checkToAddOrDelPoint(float x, float y, bool isShi
 }
 // end for safe keeping 
 
-void BoundaryPointEditorModel::evaluateMouseRelease(int worldReleaseX, int worldReleaseY,
+void BoundaryPointEditorModel::addDeleteBoundaryPoint(int worldReleaseX, int worldReleaseY,
 	bool isShiftKeyDown)
 {	
 	if (currentTool == BoundaryToolType::polygon) {

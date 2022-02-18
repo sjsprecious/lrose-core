@@ -84,7 +84,6 @@ HDRS = \
 	PpiBeam.hh \
 	PolarManager.hh \
 	PolarWidget.hh \
-	PpiWidget.hh \
 	RayLoc.hh \
 	RayLocationController.hh \
 	RayLocationModel.hh \
@@ -107,7 +106,12 @@ HDRS = \
 	SweepView.hh \
 	SweepController.hh \
 	SweepModel.hh \
+	TimeNavView.hh \
+	TimeNavController.hh \
+	TimeNavModel.hh \
 	TimeScaleWidget.hh \
+	UndoRedoController.hh \
+	UndoRedoModel.hh \
 	WorldPlot.hh
 
 NORM_SRCS = \
@@ -142,8 +146,12 @@ NORM_SRCS = \
 	SpreadSheetItem.cc \
 	SpreadSheetModel.cc \
 	SpreadSheetUtils.cc \
-	SweepController.cc \
 	SweepModel.cc \
+	SweepController.cc \
+	TimeNavModel.cc \
+	TimeNavController.cc \
+        UndoRedoController.cc \
+        UndoRedoModel.cc \
 	WorldPlot.cc 
 
 MOC_SRCS = \
@@ -152,15 +160,16 @@ MOC_SRCS = \
 	FieldRendererController.cc \
 	PolarManager.cc \
 	PolarWidget.cc \
-	PpiWidget.cc \
 	TimeScaleWidget.cc \
 	ParameterColorView.cc \
         FieldColorController.cc \
 	BoundaryPointEditor.cc \
 	BoundaryPointEditorView.cc \
+	CloseEventFilter.cc \
 	ColorBar.cc \
 	ColorMapTemplates.cc \
 	ClickableLabel.cc \
+	ClickableLabelNamed.cc \
 	DisplayFieldView.cc \
 	ScriptEditorView.cc \
 	ScriptEditorController.cc \
@@ -172,23 +181,24 @@ MOC_SRCS = \
 	SpreadSheetController.cc \
 	SpreadSheetDelegate.cc \
 	SweepView.cc \
+	TimeNavView.cc \
 	FunctionEditor.cc 
 
 MOC_OUTPUT = \
 	moc_BoundaryPointEditorView.cpp \
 	moc_BoundaryPointEditor.cpp \
-	moc_CloseEventFilter.cpp \
 	moc_FieldListView.cpp \
 	moc_FieldRendererView.cpp \
 	moc_PolarManager.cpp \
 	moc_PolarWidget.cpp \
-	moc_PpiWidget.cpp \
 	moc_TimeScaleWidget.cpp \
 	moc_ParameterColorView.cpp \
         moc_FieldColorController.cpp \
+	moc_CloseEventFilter.cpp \
 	moc_ColorBar.cpp \
 	moc_ColorMapTemplates.cpp \
 	moc_ClickableLabel.cpp \
+	moc_ClickableLabelNamed.cpp \
 	moc_DisplayFieldView.cpp \
 	moc_ScriptEditorView.cpp \
 	moc_ScriptEditorController.cpp \
@@ -200,6 +210,7 @@ MOC_OUTPUT = \
 	moc_SpreadSheetDelegate.cpp \
 	moc_SweepView.cpp \
 	moc_FunctionEditor.cpp \
+	moc_TimeNavView.cpp \
 	qrc_resources.cpp \
 	qrc_customcompleter.cpp
 

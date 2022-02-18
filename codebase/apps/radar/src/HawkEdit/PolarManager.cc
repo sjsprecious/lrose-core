@@ -22,9 +22,9 @@
 // ** WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.    
 // *=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=*=* 
 ///////////////////////////////////////////////////////////////
-// HawkEye.cc
+// PolarManager.cc
 //
-// HawkEye object
+// Polar Manager object
 //
 // Mike Dixon, RAP, NCAR, P.O.Box 3000, Boulder, CO, 80307-3000, USA
 //
@@ -58,11 +58,13 @@
 #include <string>
 #include <cmath>
 #include <iostream>
+#include <algorithm>    // std::find
 #include <Ncxx/H5x.hh>
 #include <QActionGroup>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFrame>
 #include <QFont>
 #include <QLabel>
@@ -92,6 +94,7 @@
 #include <QGraphicsAnchorLayout>
 #include <QGraphicsProxyWidget>
 
+#include <cstdlib>
 #include <fstream>
 #include <toolsa/toolsa_macros.h>
 #include <toolsa/pmu.h>
@@ -151,8 +154,8 @@ PolarManager::PolarManager(DisplayFieldController *displayFieldController,
   // initialize
 
   // from DisplayManager ...
-  _beamTimerId = 0;
-  _frozen = false;
+  //_beamTimerId = 0;
+  // _frozen = false;
   //  _displayFieldController->setSelectedField(0);
   _prevFieldNum = -1;
 
@@ -177,7 +180,7 @@ PolarManager::PolarManager(DisplayFieldController *displayFieldController,
   _nGates = 1000;
   _maxRangeKm = 1.0;
   
-  _archiveRetrievalPending = false;
+  //_archiveRetrievalPending = false;
   
   _ppiFrame = NULL;
   _ppi = NULL;
@@ -188,27 +191,31 @@ PolarManager::PolarManager(DisplayFieldController *displayFieldController,
   //_sweepVBoxLayout = NULL;
   _sweepPanel = NULL;
 
-  _archiveStartTimeEdit = NULL;
-  _archiveEndTimeEdit = NULL;
+  //_archiveStartTimeEdit = NULL;
+  //_archiveEndTimeEdit = NULL;
 
-  _selectedTimeLabel = NULL;
+  //_selectedTimeLabel = NULL;
   
-  _back1 = NULL;
-  _fwd1 = NULL;
-  _backPeriod = NULL;
-  _fwdPeriod = NULL;
+  //_back1 = NULL;
+  //_fwd1 = NULL;
+  //_backPeriod = NULL;
+  //_fwdPeriod = NULL;
 
-  _timeControl = NULL;
+  _timeNavController = NULL;
+  _timeNavView = NULL;
   _timeControlPlaced = false;
-  _timeLayout = NULL;
-  _timeSlider = NULL;
+  //_timeLayout = NULL;
+  //_timeSlider = NULL;
 
   ParamFile *_params = ParamFile::Instance();
 
-  _setArchiveMode(_params->begin_in_archive_mode);
-  _archiveStartTime.set(_params->archive_start_time);
-  _archiveEndTime = _archiveStartTime + _params->archive_time_span_secs;
-  _archiveScanIndex = 0;
+  //_setArchiveMode(_params->begin_in_archive_mode);
+
+  if (_timeNavController != NULL) {
+    //_timeNavController->setArchiveStartTime(_params->archive_start_time);
+    //_timeNavController->setArchiveEndTime(_archiveStartTime + _params->archive_time_span_secs);
+    //_timeNavController->setArchiveScanIndex(0);
+  }
 
   _imagesArchiveStartTime.set(_params->images_archive_start_time);
   _imagesArchiveEndTime.set(_params->images_archive_end_time);
@@ -231,18 +238,26 @@ PolarManager::PolarManager(DisplayFieldController *displayFieldController,
 
   _setupWindows();
 
+  // install event filter to catch when the PolarManager is closed
+  CloseEventFilter *closeFilter = new CloseEventFilter(this);
+  installEventFilter(closeFilter);
+
+  setAttribute(Qt::WA_DeleteOnClose);
+
   // set initial field to 0
 
   //_changeField(0, false);
 
+  //connect(this, SIGNAL(newDataFile()), _displayFieldController, SLOT(dataFileChanged()));  
+  //connect(this, SIGNAL(fieldSelected(string)), _displayFieldController, SLOT(fieldSelected(string))); 
 }
 
 // destructor
 
 PolarManager::~PolarManager()
-
 {
 
+  cerr << "PolarManager destructor called " << endl;
   if (_ppi) {
     delete _ppi;
   }
@@ -255,6 +270,34 @@ PolarManager::~PolarManager()
   //  delete[] _ppiRays;
   //}
   // TODO: delete all controllers
+  if (_timeNavController) {
+    //_timeNavController->~TimeNavController();
+    delete _timeNavController;
+  }
+  if (_undoRedoController) {
+    delete _undoRedoController;
+  }
+
+
+/* moved to close()
+  if (_ppi) {
+    delete _ppi;
+  }
+
+  if (_rhi) {
+    delete _rhi;
+  }
+
+  //if (_ppiRays) {
+  //  delete[] _ppiRays;
+  //}
+  // TODO: delete all controllers
+  if (_timeNavController) {
+    _timeNavController->~TimeNavController();
+    delete _timeNavController;
+  }
+  if (_timeNavView) delete _timeNavView;
+*/
 }
 
 //////////////////////////////////////////////////
@@ -269,15 +312,15 @@ int PolarManager::run(QApplication &app)
 
   show();
 
-  if (_archiveFileList.size() == 0) {
-    //getFileAndFields();
-    _openFile();
-  }
+  //if (_archiveFileList.size() == 0) {
+  //  //getFileAndFields();
+  //  _openFile();
+  //}
  
 
   // set timer running
   
-  _beamTimerId = startTimer(2000);
+  //_beamTimerId = startTimer(2000);
   
   return app.exec();
 
@@ -300,7 +343,9 @@ void PolarManager::enableZoomButton() const
 
 void PolarManager::resizeEvent(QResizeEvent *event)
 {
-  LOG(DEBUG) << "resizeEvent: " << event;
+  LOG(DEBUG) << "resizeEvent: _ppiFrame width = " << 
+  _ppiFrame->width() << 
+  ", height = " << _ppiFrame->height(); //  << event;
   emit frameResized(_ppiFrame->width(), _ppiFrame->height());
 }
 
@@ -327,13 +372,14 @@ void PolarManager::keyPressEvent(QKeyEvent * e)
     return;
   }
   
-  // for ESC, freeze / unfreeze
+  /* for ESC, freeze / unfreeze
 
   if (keychar == 27) {
     _freezeAct->trigger();
     return;
   }
-  
+  */
+
   // check for short-cut keys to fields
   size_t nFields = _displayFieldController->getNFields();
   for (size_t ifield = 0; ifield < nFields; ifield++) {
@@ -377,24 +423,24 @@ void PolarManager::keyPressEvent(QKeyEvent * e)
 
     LOG(DEBUG) << "Clicked left arrow, go back in time";
 
-    _ppi->setStartOfSweep(true);
+    //_ppi->setStartOfSweep(true);
     //_rhi->setStartOfSweep(true);
-    _goBack1();
+    //_goBack1();
 
   } else if (key == Qt::Key_Right) {
 
     LOG(DEBUG) << "Clicked right arrow, go forward in time";
     
-    _ppi->setStartOfSweep(true);
+    //_ppi->setStartOfSweep(true);
     //_rhi->setStartOfSweep(true);
-    _goFwd1();
+    //_goFwd1();
     
   } else if (key == Qt::Key_Up) {
 
     //if (_sweepManager.getGuiIndex() > 0) {
 
       LOG(DEBUG) << "Clicked up arrow, go up a sweep";
-      _ppi->setStartOfSweep(true);
+      //_ppi->setStartOfSweep(true);
       //_rhi->setStartOfSweep(true);
       _changeSweepRadioButton(-1);
 
@@ -406,7 +452,7 @@ void PolarManager::keyPressEvent(QKeyEvent * e)
 
       LOG(DEBUG) << "Clicked down arrow, go down a sweep";
       
-      _ppi->setStartOfSweep(true);
+      //_ppi->setStartOfSweep(true);
       //_rhi->setStartOfSweep(true);
       _changeSweepRadioButton(+1);
 
@@ -428,7 +474,7 @@ void PolarManager::_moveUpDown()
 
 void PolarManager::_setTitleBar(const string &radarName)
 {
-  string windowTitle = "HAWK_EYE -- " + radarName;
+  string windowTitle = "HAWK_EDIT -- " + radarName;
   setWindowTitle(tr(windowTitle.c_str()));
 }
   
@@ -452,10 +498,19 @@ void PolarManager::_setupWindows()
 
   _ppiFrame = new QFrame(_main);
   _ppiFrame->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-
+  _ppiFrame->setLineWidth(3);
+  _ppiFrame->setMidLineWidth(3);  
+  _ppiFrame->setFrameStyle(QFrame::Box);
   // configure the PPI
 
-  _ppi = new PpiWidget(_ppiFrame, this, _platform, _displayFieldController, _haveFilteredFields);
+ // _ppi = new PpiWidget(_ppiFrame, this, _platform, _displayFieldController, _haveFilteredFields);
+
+  _ppi = new PolarWidget(_ppiFrame, this, _platform, 
+    _displayFieldController, _haveFilteredFields,
+    _rayLocationController);
+  _ppiFrame->setMinimumSize(400,400);
+  _ppi->setMinimumSize(400,400);
+
 
   connect(this, SIGNAL(frameResized(const int, const int)),
 	  _ppi, SLOT(resize(const int, const int)));
@@ -490,7 +545,7 @@ void PolarManager::_setupWindows()
   // create fields panel
   
   //_createFieldPanel();
-  _fieldPanel = new DisplayFieldView(_displayFieldController);
+  _fieldPanel = new DisplayFieldView(); // _displayFieldController);
   //_displayFieldController->setView(_fieldPanel);
   _fieldPanel->createFieldPanel(_main);
  //TODO: can only connect QObjects with signals and slots...
@@ -499,7 +554,12 @@ void PolarManager::_setupWindows()
 
   connect(_fieldPanel, SIGNAL(selectedFieldChanged(QString)),
           this, SLOT(selectedFieldChanged(QString)));
-       //SLOT(_plotArchiveData()));
+
+  connect(_fieldPanel, SIGNAL(ShowParameterColorDialog(QString)),
+    this, SLOT(ShowParameterColorDialog(QString)));  // call DisplayFieldController::deleteFieldFromVolume(DisplayField *field)
+ // connect(_fieldPanel, SIGNAL(setFieldToMissing(QString)),
+ //   this, SLOT(setFieldToMissing(QString)));
+
 
   //connect(this, SIGNAL(addField(QString)), 
   //  _displayFieldController, SLOT(addField(QString)));
@@ -511,6 +571,7 @@ void PolarManager::_setupWindows()
   mainLayout->addWidget(_statusPanel);
   mainLayout->addWidget(_fieldPanel); // <=== here 
   mainLayout->addWidget(_ppiFrame);
+  _ppiFrame->show();
   _ppi->show();
 
   // sweep panel
@@ -523,10 +584,8 @@ void PolarManager::_setupWindows()
 
   connect(_sweepPanel, SIGNAL(selectedSweepChanged(double)),
           this, SLOT(selectedSweepChanged(double)));
-
-  // time panel
-
-  _createTimeControl();
+  connect(this, SIGNAL(newDataFile()), this, SLOT(dataFileChanged()));
+  //connect(this, SIGNAL(sweepSelected()), _sweepController, SLOT(sweepSelected()));
 
   // fill out menu bar
 
@@ -539,7 +598,7 @@ void PolarManager::_setupWindows()
 
   _setTitleBar(_params->radar_name);
   setMinimumSize(400, 300);
-  resize(400,300); // _params->main_window_width, _params->main_window_height);
+  resize(1100,635); // _params->main_window_width, _params->main_window_height);
   
   // set location on screen
 
@@ -554,26 +613,30 @@ void PolarManager::_setupWindows()
 
   //_createBoundaryEditorDialog();
 
-  if (_archiveMode) {
-    _showTimeControl();
-  }
-   _setSweepPanelVisibility();
+ 
+   //_setSweepPanelVisibility();
 
+  // time panel
+
+  _createTimeControl();
+  _showTimeControl();
+
+  _createUndoRedoStack();
 }
 
 //////////////////////////////
 // add/remove  sweep panel (archive mode only)
 
-void PolarManager::_setSweepPanelVisibility()
-{
-  if (_sweepPanel != NULL) {
-    if (_archiveMode) {
-      _sweepPanel->setVisible(true);
-    } else {
-      _sweepPanel->setVisible(false);
-    }
-  }
-}
+//void PolarManager::_setSweepPanelVisibility()
+//{
+//  if (_sweepPanel != NULL) {
+//    if (_archiveMode) {
+//      _sweepPanel->setVisible(true);
+//    } else {
+//     _sweepPanel->setVisible(false);
+//    }
+//  }
+//}
 
 //////////////////////////////
 // create actions for menus
@@ -584,10 +647,10 @@ void PolarManager::_createActions()
   _params = ParamFile::Instance();
 
   // freeze display
-  _freezeAct = new QAction(tr("Freeze"), this);
-  _freezeAct->setShortcut(tr("Esc"));
-  _freezeAct->setStatusTip(tr("Freeze display"));
-  connect(_freezeAct, SIGNAL(triggered()), this, SLOT(_freeze()));
+  //_freezeAct = new QAction(tr("Freeze"), this);
+  //_freezeAct->setShortcut(tr("Esc"));
+  //_freezeAct->setStatusTip(tr("Freeze display"));
+  //connect(_freezeAct, SIGNAL(triggered()), this, SLOT(_freeze()));
   
   // show user click in dialog
   _showClickAct = new QAction(tr("Show Click"), this);
@@ -600,16 +663,16 @@ void PolarManager::_createActions()
   connect(_showBoundaryEditorAct, SIGNAL(triggered()), this, SLOT(showBoundaryEditor()));
   
   // set time controller settings
-  _timeControllerAct = new QAction(tr("Time-Config"), this);
-  _timeControllerAct->setStatusTip(tr("Show time control window"));
-  connect(_timeControllerAct, SIGNAL(triggered()), this,
-          SLOT(_showTimeControl()));
+  //_timeControllerAct = new QAction(tr("Time-Config"), this);
+  //_timeControllerAct->setStatusTip(tr("Show time control window"));
+  //connect(_timeControllerAct, SIGNAL(triggered()), this,
+  //        SLOT(_showTimeControl()));
 
   // show time control window
-  _showTimeControlAct = new QAction(tr("Show time control window"), this);
+  _showTimeControlAct = new QAction(tr("Show/hide time navigation"), this);
   _showTimeControlAct->setStatusTip(tr("Show time control window"));
-  connect(_showTimeControlAct, SIGNAL(triggered()), _timeControl,
-          SLOT(show()));
+  connect(_showTimeControlAct, SIGNAL(triggered()), this,
+          SLOT(_showTimeControl()));
 
   /* realtime mode
   _realtimeAct = new QAction(tr("Set realtime mode"), this);
@@ -638,10 +701,12 @@ void PolarManager::_createActions()
   connect(_clearAct, SIGNAL(triggered()), _rhi, SLOT(clear()));
 
   // exit app
-  _exitAct = new QAction(tr("E&xit"), this);
+  _exitAct = new QAction(tr("Q&uit"), this);
   _exitAct->setShortcut(tr("Ctrl+Q"));
   _exitAct->setStatusTip(tr("Exit the application"));
-  connect(_exitAct, SIGNAL(triggered()), this, SLOT(close()));
+  // QWidget::close()
+  connect(_exitAct, &QAction::triggered, this, &QMainWindow::close); // this, SLOT(close()));
+
 
   // file chooser for Open
   _openFileAct = new QAction(tr("O&pen"), this);
@@ -718,6 +783,14 @@ void PolarManager::_createActions()
   _editAct->setStatusTip(tr("Solo Edit using (Java)Script"));
   connect(_editAct, SIGNAL(triggered()), this, SLOT(_scriptEditorSetup()));  
 
+  undoAct = new QAction(tr("&Undo"), this);
+  undoAct->setStatusTip(tr("undo edits"));
+  connect(undoAct, &QAction::triggered, this, &PolarManager::undoScriptEdits); 
+
+  redoAct = new QAction(tr("&Redo"), this);
+  redoAct->setStatusTip(tr("redo edits"));
+  connect(redoAct, &QAction::triggered, this, &PolarManager::redoScriptEdits);
+ 
 }
 
 ////////////////
@@ -733,10 +806,10 @@ void PolarManager::_createMenus()
   _fileMenu->addAction(_saveImageAct);
   _fileMenu->addAction(_exitAct);
 
-  _timeMenu = menuBar()->addMenu(tr("&Time-control"));
+  _timeMenu = menuBar()->addMenu(tr("&Time"));
   _timeMenu->addAction(_showTimeControlAct);
   _timeMenu->addSeparator();
-  _timeMenu->addAction(_realtimeAct);
+  //_timeMenu->addAction(_realtimeAct);
 
   _overlaysMenu = menuBar()->addMenu(tr("&Overlays"));
   _overlaysMenu->addAction(_ringsAct);
@@ -745,7 +818,7 @@ void PolarManager::_createMenus()
   _overlaysMenu->addSeparator();
   _overlaysMenu->addAction(_showRhiAct);
 
-  menuBar()->addAction(_freezeAct);
+  //menuBar()->addAction(_freezeAct);
   menuBar()->addAction(_showClickAct);
 
   _boundaryMenu = menuBar()->addMenu(tr("&Boundary"));
@@ -758,7 +831,9 @@ void PolarManager::_createMenus()
   _editMenu->addSeparator();
   _editMenu->addAction(_examineAct);
   _editMenu->addAction(_editAct);
-
+  // _editMenu->addSeparator();
+  _editMenu->addAction(undoAct);
+  _editMenu->addAction(redoAct);
 
   _helpMenu = menuBar()->addMenu(tr("&Help"));
   _helpMenu->addAction(_howtoAct);
@@ -814,83 +889,56 @@ void PolarManager::_changeSweepRadioButton(int increment)
 
 }
 
+void PolarManager::deleteFieldFromVolume(QString fieldName) {
+  _displayFieldController->deleteFieldFromVolume(fieldName.toStdString());
+}
+
+void PolarManager::setFieldToMissing(QString fieldName) {
+  _displayFieldController->setFieldToMissing(fieldName.toStdString());
+}
+
 ///////////////////////////////////////
 // set input file list for archive mode
 
 void PolarManager::setArchiveFileList(const vector<string> &list,
-                                      bool fromCommandLine /* = true */)
+                                      bool fromCommandLine // = true 
+)
+// TODO: don't think fromCommandLine is used???
 {
 
-  if (fromCommandLine && list.size() > 0) {
-    // determine start and end time from file list
-    RadxTime startTime, endTime;
-    NcfRadxFile::getTimeFromPath(list[0], startTime);
-    NcfRadxFile::getTimeFromPath(list[list.size()-1], endTime);
-    // round to nearest five minutes
-    time_t startTimeSecs = startTime.utime();
-    startTimeSecs =  (startTimeSecs / 300) * 300;
-    time_t endTimeSecs = endTime.utime();
-    endTimeSecs =  (endTimeSecs / 300) * 300 + 300;
-    _archiveStartTime.set(startTimeSecs);
-    _archiveEndTime.set(endTimeSecs);
-    _archiveScanIndex = 0;
-  }
+  if (list.size() <= 0) {
+    errorMessage("Error", "Empty list of archive files");
+    return;
+  } 
 
-  _archiveFileList = list;
-  _setArchiveRetrievalPending();
+  //_archiveFileList = list;
+  //_setArchiveRetrievalPending();
 
-  if (_archiveScanIndex < 0) {
-    _archiveScanIndex = 0;
-  } else if (_archiveScanIndex > (int) _archiveFileList.size() - 1) {
-    _archiveScanIndex = _archiveFileList.size() - 1;
-  }
-
-  if (_timeSlider) {
-    _timeSlider->setMinimum(0);
-    if (_archiveFileList.size() <= 1)
-      _timeSlider->setMaximum(1);
-    else
-      _timeSlider->setMaximum(_archiveFileList.size() - 1);
-    _timeSlider->setSliderPosition(_archiveScanIndex);
-  }
-
-  // check if the paths include a day dir
-
-  _archiveFilesHaveDayDir = false;
-  if (list.size() > 0) {
-    RadxPath path0(list[0]);
-    RadxPath parentPath(path0.getDirectory());
-    string parentDir = parentPath.getFile();
-    int year, month, day;
-    if (sscanf(parentDir.c_str(), "%4d%2d%2d", &year, &month, &day) == 3) {
-      _archiveFilesHaveDayDir = true;
+  if (_timeNavController) {
+    // move up two levels in the directory to find the top level
+    // maybe like this ...
+    //  .../toplevel/yyyymmdd/chosenfile
+    QString fullUrl(QString(list.at(0).c_str()));
+    QDir theDir(fullUrl);
+    if (theDir.cd("../../")) {
+      QString thePath = theDir.absolutePath();
+      QFileInfo fileInfo(fullUrl);
+      QString theFile = fileInfo.fileName();
+      _timeNavController->fetchArchiveFiles(thePath.toStdString(),
+        theFile.toStdString(), fullUrl.toStdString());
+      //_timeNavController->fetchArchiveFiles
     }
   }
-
-  if (_archiveFilesHaveDayDir) {
-    _archiveStartTimeEdit->setEnabled(true);
-    _archiveEndTimeEdit->setEnabled(true);
-    _backPeriod->setEnabled(true);
-    _fwdPeriod->setEnabled(true);
-  } else {
-    _archiveStartTimeEdit->setEnabled(false);
-    _archiveEndTimeEdit->setEnabled(false);
-    _backPeriod->setEnabled(false);
-    _fwdPeriod->setEnabled(false);
-  }
-
-  _setGuiFromArchiveStartTime();
-  _setGuiFromArchiveEndTime();
-
 }
   
 ///////////////////////////////////////////////
 // get archive file list by searching for files
 // returns 0 on success, -1 on failure
-
+/*
 int PolarManager::loadArchiveFileList()
 
 {
+  
   RadxTimeList timeList;
   timeList.setDir(_params->archive_data_url);
   timeList.setModeInterval(_archiveStartTime, _archiveEndTime);
@@ -911,18 +959,20 @@ int PolarManager::loadArchiveFileList()
   setArchiveFileList(timeList.getPathList(), false);
   
   return 0;
-
 }
+*/
+
 
 ///////////////////////////////////////
 // handle data in archive mode
 
-void PolarManager::_handleArchiveData()
-{
+//void PolarManager::_handleArchiveData()
+//{
+/*
     LOG(DEBUG) << "enter";
 
-  _ppi->setArchiveMode(true);
-  _ppi->setStartOfSweep(true);
+  //_ppi->setArchiveMode(true);
+  //_ppi->setStartOfSweep(true);
 
   //_rhi->setArchiveMode(true);
   //_rhi->setStartOfSweep(true);
@@ -930,7 +980,7 @@ void PolarManager::_handleArchiveData()
   // set cursor to wait cursor
 
   this->setCursor(Qt::WaitCursor);
-  _timeControl->setCursor(Qt::WaitCursor);
+  //_timeNavController->setCursor(Qt::WaitCursor);
   
   // get data
   try {
@@ -938,14 +988,9 @@ void PolarManager::_handleArchiveData()
     _setupRayLocation();
   } catch (FileIException &ex) {
     this->setCursor(Qt::ArrowCursor);
-    _timeControl->setCursor(Qt::ArrowCursor);
+    //_timeNavController->setCursor(Qt::ArrowCursor);
     return;
   }
-
-  // set up sweep GUI
-
-  _sweepController->clearSweepRadioButtons();
-  _sweepController->createSweepRadioButtons();
   
   //if (_vol.checkIsRhi()) {
   //  _rhiMode = true;
@@ -957,15 +1002,16 @@ void PolarManager::_handleArchiveData()
   
   _plotArchiveData();
   this->setCursor(Qt::ArrowCursor);
-  _timeControl->setCursor(Qt::ArrowCursor);
+  //_timeNavController->setCursor(Qt::ArrowCursor);
 
-  _activateArchiveRendering();
+  //_activateArchiveRendering();
 
   if (_firstTime) {
     _firstTime = false;
   }
   
 }
+*/
 
 /////////////////////////////
 // get data in archive mode
@@ -1116,21 +1162,38 @@ void PolarManager::getFileAndFields() {
         //setArchiveFileList(fileList, false);
 
 }
-/////////////////////////////
-// get data in archive mode
-// returns 0 on success, -1 on failure
-// precondition: assumes setArchiveFileList is called before
 
-int PolarManager::_getArchiveData()
+string PolarManager::_getSelectedFile() {
+      // need to get the current version of the selected file (by index)
+      int selectedArchiveFileIndex = 
+        _timeNavController->getSelectedArchiveFileIndex();
+      string inputPath = 
+        _undoRedoController->getCurrentVersion(selectedArchiveFileIndex);
+      if (inputPath.empty()) {
+        inputPath = _timeNavController->getSelectedArchiveFile();
+      } else {
+        // add the file name to the version path
+        inputPath.append("/");
+        string fileName = _timeNavController->getSelectedArchiveFileName();
+        inputPath.append(fileName);
+      }
+      return inputPath;
+}
 
-{
-/* moved to DataModel::readData()
-  // set up file object for reading
-  
-  RadxFile file;
-  _vol.clear();
-  _setupVolRead(file);
-  */
+string PolarManager::_getFileNewVersion(int archiveFileIndex) {
+  string nextVersionPath = 
+    _undoRedoController->getNewVersion(archiveFileIndex);
+  // add the file name to the version path
+  nextVersionPath.append("/");
+  string fileName = _timeNavController->getSelectedArchiveFileName();
+  nextVersionPath.append(fileName);
+
+  return nextVersionPath;
+
+}
+
+
+int PolarManager::_getArchiveDataPlainVanilla(string &inputPath) {
   bool debug_verbose = false;
   bool debug_extra = false;
   if (_params->debug >= Params::DEBUG_VERBOSE) {
@@ -1140,47 +1203,43 @@ int PolarManager::_getArchiveData()
     debug_verbose = true;
     debug_extra = true;
   }
-
-  DataModel *dataModel = DataModel::Instance();
-
-  // be sure to call setArchiveFileList before we get here!
-  if (_archiveScanIndex >= 0 &&
-      _archiveScanIndex < (int) _archiveFileList.size()) {
-    
-    try {
-      string inputPath = _archiveFileList[_archiveScanIndex];
-      vector<string> fieldNames = _displayFieldController->getFieldNames();
-      dataModel->readData(inputPath, fieldNames,
-        debug_verbose, debug_extra);
-    } catch (const string &errMsg) {
-      if (!_params->images_auto_create)  {
-        QErrorMessage errorDialog;
-        errorDialog.setMinimumSize(400, 250);
-        errorDialog.showMessage(errMsg.c_str());
-        errorDialog.exec();
-      }
+  DataModel *dataModel = DataModel::Instance();    
+  try {
+    vector<string> fieldNames = _displayFieldController->getFieldNames();
+    dataModel->readData(inputPath, fieldNames,
+      debug_verbose, debug_extra);
+  } catch (const string &errMsg) {
+    if (!_params->images_auto_create)  {
+      QErrorMessage errorDialog;
+      errorDialog.setMinimumSize(400, 250);
+      errorDialog.showMessage(errMsg.c_str());
+      errorDialog.exec();
     }
- /*
-      LOG(DEBUG) << "  reading data file path: " << inputPath;
-      LOG(DEBUG) << "  archive file index: " << _archiveScanIndex;
-    
-    
-    if (file.readFromPath(inputPath, _vol)) {
-      string errMsg = "ERROR - Cannot retrieve archive data\n";
-      errMsg += "PolarManager::_getArchiveData\n";
-      errMsg += file.getErrStr() + "\n";
-      errMsg += "  path: " + inputPath + "\n";
-      cerr << errMsg;
-      if (!_params->images_auto_create)  {
-        QErrorMessage errorDialog;
-        errorDialog.setMinimumSize(400, 250);
-        errorDialog.showMessage(errMsg.c_str());
-        errorDialog.exec();
-      }
-      return -1;
-    } 
-*/
   }
+  LOG(DEBUG) << "exit";
+  return 0;
+}
+
+
+/////////////////////////////
+// get data in archive mode
+// returns 0 on success, -1 on failure
+// precondition: assumes setArchiveFileList is called before
+
+int PolarManager::_getArchiveData()
+{
+  string inputPath = _getSelectedFile();
+  return _getArchiveData(inputPath);
+}
+
+int PolarManager::_getArchiveData(string &inputPath)
+{
+
+int result = _getArchiveDataPlainVanilla(inputPath);
+if (result == 0) {
+  emit newDataFile();
+
+  DataModel *dataModel = DataModel::Instance();  
 
   // set plot times
   
@@ -1196,23 +1255,6 @@ int PolarManager::_getArchiveData()
            _plotStartTime.getMin(),
            _plotStartTime.getSec());
 
-  _selectedTimeLabel->setText(text);
-
-  // adjust angles for elevation surveillance if needed
-  
-  //dataModel->setAnglesForElevSurveillance();
-  
-  // compute the fixed angles from the rays
-  // so that we reflect reality
-  
-  //dataModel->computeFixedAnglesFromRays();
-
-  // load the sweep manager
-  
-  //_sweepManager.set(_vol);
-  // TODO: signal new volume read?
-
-
     LOG(DEBUG) << "----------------------------------------------------";
     LOG(DEBUG) << "perform archive retrieval";
     LOG(DEBUG) << "  read file: " << dataModel->getPathInUse();
@@ -1223,8 +1265,8 @@ int PolarManager::_getArchiveData()
     LOG(DEBUG) << "----------------------------------------------------";
   
   
-  _platform = dataModel->getPlatform();
-
+    _platform = dataModel->getPlatform();
+  }
   LOG(DEBUG) << "exit";
   return 0;
 }
@@ -1246,6 +1288,9 @@ size_t PolarManager::getSelectedFieldIndex() {
   return selectedFieldIndex;
 }
 
+
+
+
 /////////////////////////////
 // apply new, edited  data in archive mode
 // the volume has been updated 
@@ -1254,14 +1299,10 @@ size_t PolarManager::getSelectedFieldIndex() {
 
 void PolarManager::_applyDataEdits()
 {
-
-  if (0) { // _params->debug) {
-    std::ofstream outfile("/tmp/voldebug_PolarManager_applyDataEdits.txt");
-    _vol.printWithFieldData(outfile);  
-    outfile << "_vol = " << &_vol << endl;
-  }
-
+  LOG(DEBUG) << "enter";
+  _setupRayLocation();
   _plotArchiveData();
+  LOG(DEBUG) << "exit";
 }
 
 
@@ -1272,12 +1313,12 @@ void PolarManager::_addNewFields(QStringList  newFieldNames)
 {
   LOG(DEBUG) << "enter";
   LOG(DEBUG) << "all fields in _vol ... ";
-  vector<RadxField *> allFields = _vol.getFields();
-  vector<RadxField *>::iterator it;
-  for (it = allFields.begin(); it != allFields.end(); it++) {
-    RadxField *radxField = *it;
-    LOG(DEBUG) << radxField->getName();
-  }
+  //vector<RadxField *> allFields = _vol.getFields();
+  //vector<RadxField *>::iterator it;
+  //for (it = allFields.begin(); it != allFields.end(); it++) {
+  //  RadxField *radxField = *it;
+  //  LOG(DEBUG) << radxField->getName();
+  //}
 
 
   // TODO: 
@@ -1338,13 +1379,13 @@ void PolarManager::_addNewFields(QStringList  newFieldNames)
 void PolarManager::_addNewFields(vector<string> *newFieldNames)
 {
   LOG(DEBUG) << "enter";
-  LOG(DEBUG) << "all fields in _vol ... ";
-  vector<RadxField *> allFields = _vol.getFields();
-  vector<RadxField *>::iterator it;
-  for (it = allFields.begin(); it != allFields.end(); it++) {
-    RadxField *radxField = *it;
-    LOG(DEBUG) << radxField->getName();
-  }
+  //LOG(DEBUG) << "all fields in _vol ... ";
+  //vector<RadxField *> allFields = _vol.getFields();
+  //vector<RadxField *>::iterator it;
+  //for (it = allFields.begin(); it != allFields.end(); it++) {
+  //  RadxField *radxField = *it;
+  //  LOG(DEBUG) << radxField->getName();
+  //}
 
 
   // TODO: 
@@ -1571,24 +1612,29 @@ void PolarManager::_volumeDataChanged(QStringList newFieldNames)
   //_activateArchiveRendering();
   // _plotArchiveData();
   // TODO: create this ... from plotArchiveData()
-  _updateArchiveData(newFieldNames); 
-  _activateArchiveRendering();
+  //_updateArchiveData(newFieldNames); 
+  //_activateArchiveRendering();
 
   LOG(DEBUG) << "exit"; 
 }
 
 
 void PolarManager::selectedFieldChanged(QString newFieldName) {
-  string fieldName = newFieldName.toStdString();
+  selectedFieldChanged(newFieldName.toStdString());
+}
+
+void PolarManager::selectedFieldChanged(string fieldName) {
   _displayFieldController->setSelectedField(fieldName);
   _plotArchiveData();
   refreshBoundaries();
 }
 
 
-void PolarManager::selectedSweepChanged(double) {
+void PolarManager::selectedSweepChanged(double angle) {
   //string fieldName = newFieldName.toStdString();
   //_displayFieldController->setSelectedField(fieldName);
+  _sweepController->setAngle(angle);
+  _setupRayLocation();
   _plotArchiveData();
   refreshBoundaries();
 }
@@ -1605,49 +1651,17 @@ void PolarManager::_plotArchiveData()
 
 {
 
-  
     LOG(DEBUG) << "enter";
     LOG(DEBUG) << "  volume start time: " << _plotStartTime.asString();
   
-
   // initialize plotting
 
   _initialRay = true;
 
-  /*
-  // handle the rays
-  
-  const vector<RadxRay *> &rays = _vol.getRays();
-  if (rays.size() < 1) {
-    cerr << "ERROR - _plotArchiveData" << endl;
-    cerr << "  No rays found" << endl;
-    return;
-  }
-  
-  const vector<RadxSweep *> &sweeps = _vol.getSweeps();
-  if (sweeps.size() < 1) {
-    cerr << "ERROR - _plotArchiveData" << endl;
-    cerr << "  No sweeps found" << endl;
-    return;
-  }
-*/
   // clear the canvas
 
-  _clear();
+  //_clear();
 
-/*
-  // handle the rays
-
-  const SweepManager::GuiSweep &gsweep = _sweepManager.getSelectedSweep();
-  for (size_t ii = gsweep.radx->getStartRayIndex();
-       ii <= gsweep.radx->getEndRayIndex(); ii++) {
-    RadxRay *ray = rays[ii];
-    _handleRay(_platform, ray);
-    if (ii == 0) {
-      _updateStatusPanel(ray);
-    }
-  }
-  */
 
   string currentFieldName = _displayFieldController->getSelectedFieldName();
   double currentSweepAngle = _sweepController->getSelectedAngle();
@@ -1656,164 +1670,16 @@ void PolarManager::_plotArchiveData()
   
   string backgroundColorName = _displayFieldController->getBackgroundColor();
   QColor backgroundColor(backgroundColorName.c_str());
-
-  _ppi->displayImage(currentFieldName, currentSweepAngle,
-    _rayLocationController, *colorMap, backgroundColor); 
-  // _sweepController->getSelectedAngle(),
-  // _displayFieldController->getSelectedFieldName());
-  //_updateStatusPanel(???);
+  try {
+    _ppi->displayImage(currentFieldName, currentSweepAngle,
+      *colorMap, backgroundColor); 
+  } catch (std::invalid_argument &ex) {
+    errorMessage("Error", ex.what());
+  }
 
   LOG(DEBUG) << "exit";
 }
 
-void PolarManager::_updateArchiveData(QStringList newFieldNames)
-{
-
-  vector<string> newFieldNamesConverted;
-  for (int i=0; i < newFieldNames.size(); ++i) {
-    string name = newFieldNames.at(i).toLocal8Bit().constData();
-    newFieldNamesConverted.push_back(name);
-  }
-  _updateArchiveData(newFieldNamesConverted);
- 
-}
-
-void PolarManager::_updateArchiveData(vector<string> &newFieldNamesConverted) 
-{
-
-    LOG(DEBUG) << "Updating archive data";
-    LOG(DEBUG) << "  volume start time: " << _plotStartTime.asString();
-  
-
-  // initialize plotting
-  //_initialRay = true;
-
-  // handle the rays
-  _vol.loadRaysFromFields();  // this line makes the select field update properly  
-
-  const vector<RadxRay *> &rays = _vol.getRays();
-  if (rays.size() < 1) {
-    cerr << "ERROR - _updateArchiveData" << endl;
-    cerr << "  No rays found" << endl;
-    return;
-  }
-
-  // TODO: make sure we are getting the newFields from the _vol
-  // remember, the reader only reads in the fields specified in the params <======
-  LOG(DEBUG) << "===========  HERE are the fields ";
-  vector<RadxField *> _vol_fields = rays[0]->getFields();
-  vector<RadxField *>::iterator it;
-  for (it=_vol_fields.begin(); it!=_vol_fields.end(); ++it) {
-    LOG(DEBUG) << (*it)->getName();
-  }
-  
-  // TODO: reload the sweeps into the sweepManager?
-  //  I added this ...
-  //_sweepManager.set(_vol);
-
-  //const vector<RadxSweep *> &sweeps = _vol.getSweeps();
-  //if (sweeps.size() < 1) {
-  //  cerr << "ERROR - _plotArchiveData" << endl;
-  //  cerr << "  No sweeps found" << endl;
-  //  return;
-  //}
-
-  // clear the canvas
-  //_clear();
-
-  /*
-  vector<string> newFieldNamesConverted;
-  for (int i=0; i < newFieldNames.size(); ++i) {
-    string name = newFieldNames.at(i).toLocal8Bit().constData();
-    newFieldNamesConverted.push_back(name);
-  }
-  */
-
-  // handle the rays
-/*
-  const SweepManager::GuiSweep &gsweep = _sweepManager.getSelectedSweep();
-  for (size_t ii = gsweep.radx->getStartRayIndex();
-       ii <= gsweep.radx->getEndRayIndex(); ii++) {
-    RadxRay *ray = rays[ii];
-    _handleRayUpdate(_platform, ray, newFieldNamesConverted);  // TODO; _handleRay? or a modified version of it?  We just need something to call updateBeam, instead of addBeam ...
-    //if (ii == 0) {
-    //  _updateStatusPanel(ray);
-    //}
-  }
- */ 
-}
-
-void PolarManager::_updateColorMap(string fieldName) 
-{
-
-  
-    LOG(DEBUG) << "Updating color map";
-  
-  /*
-  // handle the rays
-  _vol.loadRaysFromFields();  // this line makes the select field update properly  
-
-  const vector<RadxRay *> &rays = _vol.getRays();
-  if (rays.size() < 1) {
-    cerr << "ERROR - _updateArchiveData" << endl;
-    cerr << "  No rays found" << endl;
-    return;
-  }
-
-  // TODO: make sure we are getting the newFields from the _vol
-  // remember, the reader only reads in the fields specified in the params <======
-  //LOG(DEBUG) << "===========  HERE are the fields ";
-  vector<RadxField *> _vol_fields = rays[0]->getFields();
-  vector<RadxField *>::iterator it;
-  //for (it=_vol_fields.begin(); it!=_vol_fields.end(); ++it) {
-  //  LOG(DEBUG) << (*it)->getName();
-  //}
-  
-  // TODO: reload the sweeps into the sweepManager?
-  //  I added this ...
-  _sweepManager.set(_vol);
-
-  // handle the rays
-
-  const SweepManager::GuiSweep &gsweep = _sweepManager.getSelectedSweep();
-  //  for (size_t ii = gsweep.radx->getStartRayIndex();
-  //       ii <= gsweep.radx->getEndRayIndex(); ii++) {
-  //    RadxRay *ray = rays[ii];
-  */
-    _handleColorMapChangeOnRay(_platform, fieldName); 
-    //}
-  
-}
-
-
-//////////////////////////////////////////////////
-// set up read
-
-/* moved to DataModel
-void PolarManager::_setupVolRead(RadxFile &file)
-{
-
-  if (_params->debug >= Params::DEBUG_VERBOSE) {
-    file.setDebug(true);
-  }
-  if (_params->debug >= Params::DEBUG_EXTRA) {
-    file.setDebug(true);
-    file.setVerbose(true);
-  }
-
-  vector<string> fieldNames = _displayFieldController->getFieldNames();
-  vector<string>::iterator it;
-  for (it = fieldNames.begin(); it != fieldNames.end(); it++) {
-    file.addReadField(*it);
-  }
-  
-  //  for (size_t ifield = 0; ifield < _fields.size(); ifield++) {
-  //    const DisplayField *field = _fields[ifield];
-  //    file.addReadField(field->getName());
-  //  }
-
-}
-*/
 //////////////////////////////////////////////////////////////
 // handle an incoming ray
 
@@ -1967,12 +1833,29 @@ void PolarManager::_handleRay(RadxPlatform &platform, RadxRay *ray)
 // call when new data file is read; or when switching to new sweep?
 // or when new parameter file is read
 void PolarManager::_setupRayLocation() {
+  cerr << "setupRayLocations: enter " << endl;
   float ppi_rendering_beam_width = _platform.getRadarBeamWidthDegH();
   if (_params->ppi_override_rendering_beam_width) {
     ppi_rendering_beam_width = _params->ppi_rendering_beam_width;
   }
-  _rayLocationController->sortRaysIntoRayLocations(ppi_rendering_beam_width);
+  int currentSweepNumber = _sweepController->getSelectedNumber();
+  _rayLocationController->sortRaysIntoRayLocations(ppi_rendering_beam_width,
+    currentSweepNumber);
+
+  _setMaxRangeKm();
+    cerr << "setupRayLocations: exit " << endl;
 }
+
+// find and set the max range for the Ppi display
+void PolarManager::_setMaxRangeKm() {
+   double maxRangeKm = _rayLocationController->getMaxRangeKm();
+
+  // configure the max range for display
+  _ppi->configureRange(maxRangeKm);
+
+}
+
+
 
 // We need to resize the arrays that are retained and look up the field Index by field name,
 // because we are only redrawing the new fields and these stores have a field index
@@ -2220,7 +2103,7 @@ void PolarManager::_handleColorMapChangeOnRay(RadxPlatform &platform,
     try {
       size_t nFields = _displayFieldController->getNFields();
       if (_nGates < 0) throw "Error, cannot convert _nGates < 0 to type size_t";
-      _ppi->updateBeamColors(nFields, fieldName, (size_t) _nGates); //ray, _startAz, _endAz, data, nFields, fieldName);
+      //_ppi->updateBeamColors(nFields, fieldName, (size_t) _nGates); //ray, _startAz, _endAz, data, nFields, fieldName);
     } catch (std::range_error &ex) {
       LOG(ERROR) << fieldName;
       LOG(ERROR) << ex.what();
@@ -2236,13 +2119,24 @@ void PolarManager::_handleColorMapChangeOnRay(RadxPlatform &platform,
 }
 
 
+void PolarManager::dataFileChanged() {
+
+  _sweepController->clearSweepRadioButtons();
+  _sweepController->createSweepRadioButtons();
+  if (sheetView != NULL) {
+    sheetView->applyEdits();
+  }
+  _plotArchiveData();
+
+}
+
 ///////////////////////////////////////////////////////////
 /* store ray location
 
 void PolarManager::_storeRayLoc(const RadxRay *ray, const double az,
                                 const double beam_width, RayLoc *ray_loc)
 {
-
+x
   // Determine the extent of this ray
 
   if (_params->ppi_override_rendering_beam_width) {
@@ -2400,6 +2294,7 @@ void PolarManager::_clearRayOverlap(const int start_index, const int end_index,
 ////////////////////////////////////////////
 // freeze / unfreeze
 
+/*
 void PolarManager::_freeze()
 {
   if (_frozen) {
@@ -2413,6 +2308,7 @@ void PolarManager::_freeze()
     _initialRay = true;
   }
 }
+*/
 
 ////////////////////////////////////////////
 // unzoom
@@ -2494,7 +2390,7 @@ void PolarManager::changeToField(QString newFieldName)
 }
 
 // PolarManager::colorMapRedefineReceived(string, ColorMap)
-// TODO: need to add the background changed, etc. 
+//  add the background changed, etc. 
 void PolarManager::colorMapRedefineReceived(string fieldName, ColorMap newColorMap,
 					    QColor gridColor,
 					    QColor emphasisColor,
@@ -2506,13 +2402,7 @@ void PolarManager::colorMapRedefineReceived(string fieldName, ColorMap newColorM
   try {
     //  This should save/perpetuate the color map in the DisplayField object
     _displayFieldController->saveColorMap(fieldName, &newColorMap);
-    _displayFieldController->updateFieldPanel(fieldName);
-    //size_t fieldId = _displayFieldController->getFieldIndex(fieldName);
-    //vector<string> fieldNames;
-    //fieldNames.push_back(fieldName);
-    //_updateArchiveData(fieldNames);  // ?? or  _updateField(fieldId);
-    _updateColorMap(fieldName);
-    _fieldPanel->updateFieldPanel(fieldName, fieldName, fieldName);
+    _displayFieldController->updateFieldPanel(fieldName, _fieldPanel);
   } catch (std::invalid_argument &ex) {
     LOG(ERROR) << fieldName;
     LOG(ERROR) << ex.what(); // "ERROR - field not found; no color map change";
@@ -2520,41 +2410,9 @@ void PolarManager::colorMapRedefineReceived(string fieldName, ColorMap newColorM
   } 
   _ppi->backgroundColor(backgroundColor);
   _ppi->gridRingsColor(gridColor);
-  _ppi->colorScaleLegend(); // TODO: may not need this??
-  //_ppi->drawOverlays();
 
-  // ??   _ppi->selectVar(fieldId);
+  selectedFieldChanged(fieldName);
 
-  /*
-  // find the fieldName in the list of FieldDisplays                                                
-  bool found = false;
-  vector<DisplayField *>::iterator it;
-  int fieldId = -1;
-
-  it = _fields.begin();
-  while ( it != _fields.end() && !found ) {
-    DisplayField *field = *it;
-
-    string name = field->getName();
-    if (name.compare(fieldName) == 0) {
-      found = true;
-      field->replaceColorMap(newColorMap);
-    }
-    fieldId++;
-    it++;
-  }
-  if (!found) {
-    LOG(ERROR) << fieldName;
-    LOG(ERROR) << "ERROR - field not found; no color map change";
-    // TODO: present error message box                                                              
-  } else {
-    // look up the fieldId from the fieldName                                                       
-    // change the field variable                                                                    
-    _ppi->backgroundColor(backgroundColor);
-    _ppi->gridRingsColor(gridColor);
-    _changeField(fieldId, false);
-  }
-  */
   LOG(DEBUG) << "exit";
 }
 
@@ -2570,18 +2428,31 @@ void PolarManager::setVolume() { // const RadxVol &radarDataVolume) {
 
 }
 
-// TODO: make this a SLOT to a SIGNAL from  ScriptEditor 
+// this is a SLOT to a SIGNAL from  ScriptEditor 
 
 void PolarManager::updateVolume(QStringList newFieldNames) {
 
   LOG(DEBUG) << "enter";
   _volumeDataChanged(newFieldNames);
-
+  _unSavedEdits = true;
   vector<DisplayField *> newFields;
 
 
   LOG(DEBUG) << "exit";
 
+}
+
+void PolarManager::spreadsheetDataChanged() {
+  _unSavedEdits = true;
+
+  // make a new version
+  // each "Apply" is a step in the undo/redo stack
+
+  int archiveFileIndex = 
+    _timeNavController->getSelectedArchiveFileIndex();
+  string nextVersionPath = _getFileNewVersion(archiveFileIndex);
+  DataModel *dataModel = DataModel::Instance();
+  dataModel->writeData(nextVersionPath);  
 }
 
 ///////////////////////////////////////////////////
@@ -2629,10 +2500,45 @@ void PolarManager::_ppiLocationClicked(double xkm, double ykm,
     return;
   }
 
+  // notify the status display area to update
   _locationClicked(xkm, ykm, ray);
-  // update the spreadsheet if it is active
-  if (sheetView != NULL) {
-    _examineSpreadSheetSetup(azDeg, range);
+
+  // first right of refusal is the boundary editor, if a polygon is not complete
+  // TODO:  moved to BPE
+    //BoundaryPointEditor *editor = boundaryPointEditorControl;
+    //int _worldReleaseX = mouseReleaseX;
+    //int _worldReleaseY = mouseReleaseY;
+  bool isUseful = false;
+  if (boundaryPointEditorControl != NULL) {
+    isUseful = boundaryPointEditorControl->evaluatePoint((int) xkm, (int) ykm);
+  }
+
+  /*
+      if (editor->getCurrentTool() == BoundaryToolType::polygon) {
+        if (!editor->isAClosedPolygon()) {
+          editor->addPoint(_worldReleaseX, _worldReleaseY);
+        } else { //polygon finished, user may want to insert/delete a point
+          editor->checkToAddOrDelPoint(_worldReleaseX,
+                                       _worldReleaseY);
+        }
+      } else if (editor->getCurrentTool() == BoundaryToolType::circle) {
+        if (editor->isAClosedPolygon()) {
+          editor->checkToAddOrDelPoint(_worldReleaseX,
+                                       _worldReleaseY);
+        } else {
+          editor->makeCircle(_worldReleaseX,
+                             _worldReleaseY,
+                             editor->getCircleRadius());
+        }
+      }  
+  */
+
+  // second choice is the spreadsheet editor
+  if (!isUseful) {
+    // update the spreadsheet if it is active
+    if (sheetView != NULL) {
+      _examineSpreadSheetSetup(azDeg, range);
+    }
   }
 
 }
@@ -2678,9 +2584,9 @@ void PolarManager::_locationClicked(double xkm, double ykm,
     LOG(DEBUG) << "  az, el from ray: "
          << ray->getAzimuthDeg() << ", "
          << ray->getElevationDeg();
-    if (_params->debug >= Params::DEBUG_VERBOSE) {
-      ray->print(cerr);
-    }
+    //if (_params->debug >= Params::DEBUG_VERBOSE) {
+    //  ray->print(cerr);
+    //}
   }
 
   //**** testing ****
@@ -2783,192 +2689,66 @@ void PolarManager::_locationClicked(double xkm, double ykm,
     
 }
 
+void PolarManager::_createUndoRedoStack() {
+  _undoRedoController = new UndoRedoController();
+}
+
 //////////////////////////////////////////////
-// create the time panel
+// create the time navigation controller and view
 
 void PolarManager::_createTimeControl()
 {
+  _timeNavView = new TimeNavView(this);
+  _timeNavController = new TimeNavController(_timeNavView);
   
-  _timeControl = new QDialog(this);
-  _timeControl->setWindowTitle("Time controller");
-  QPoint pos(0,0);
-  _timeControl->move(pos);
-
-  QBoxLayout *timeControlLayout =
-    new QBoxLayout(QBoxLayout::TopToBottom, _timeControl);
-  timeControlLayout->setSpacing(0);
-
-  // create time panel
-  
-  _timePanel = new QFrame(_timeControl);
-  timeControlLayout->addWidget(_timePanel, Qt::AlignCenter);
-  _timeLayout = new QVBoxLayout;
-  _timePanel->setLayout(_timeLayout);
-
-  QFrame *timeUpper = new QFrame(_timePanel);
-  QHBoxLayout *timeUpperLayout = new QHBoxLayout;
-  timeUpperLayout->setSpacing(10);
-  timeUpper->setLayout(timeUpperLayout);
-  
-  QFrame *timeLower = new QFrame(_timePanel);
-  QHBoxLayout *timeLowerLayout = new QHBoxLayout;
-  timeLowerLayout->setSpacing(10);
-  timeLower->setLayout(timeLowerLayout);
-
-  _timeLayout->addWidget(timeUpper);
-  _timeLayout->addWidget(timeLower);
-  
-  // create slider
-  
-  _timeSlider = new QSlider(Qt::Horizontal);
-  _timeSlider->setFocusPolicy(Qt::StrongFocus);
-  _timeSlider->setTickPosition(QSlider::TicksBothSides);
-  _timeSlider->setTickInterval(1);
-  _timeSlider->setTracking(true);
-  _timeSlider->setSingleStep(1);
-  _timeSlider->setPageStep(0);
-  _timeSlider->setFixedWidth(400);
-  _timeSlider->setToolTip("Drag to change time selection");
-  
-  // active time
-
-  // _selectedTimeLabel = new QLabel("yyyy/MM/dd hh:mm:ss", _timePanel);
-  _selectedTimeLabel = new QPushButton(_timePanel);
-  _selectedTimeLabel->setText("yyyy/MM/dd hh:mm:ss");
-  QPalette pal = _selectedTimeLabel->palette();
-  pal.setColor(QPalette::Active, QPalette::Button, Qt::cyan);
-  _selectedTimeLabel->setPalette(pal);
-  _selectedTimeLabel->setToolTip("This is the selected data time");
-
-  // time editing
-
-  _archiveStartTimeEdit = new QDateTimeEdit(timeUpper);
-  _archiveStartTimeEdit->setDisplayFormat("yyyy/MM/dd hh:mm:ss");
-  QDate startDate(_archiveStartTime.getYear(), 
-                  _archiveStartTime.getMonth(),
-                  _archiveStartTime.getDay());
-  QTime startTime(_archiveStartTime.getHour(),
-                  _archiveStartTime.getMin(),
-                  _archiveStartTime.getSec());
-  QDateTime startDateTime(startDate, startTime);
-  _archiveStartTimeEdit->setDateTime(startDateTime);
-  connect(_archiveStartTimeEdit, SIGNAL(dateTimeChanged(const QDateTime &)), 
-          this, SLOT(_setArchiveStartTimeFromGui(const QDateTime &)));
-  _archiveStartTimeEdit->setToolTip("Start time of archive period");
-  
-  _archiveEndTimeEdit = new QDateTimeEdit(timeUpper);
-  _archiveEndTimeEdit->setDisplayFormat("yyyy/MM/dd hh:mm:ss");
-  QDate endDate(_archiveEndTime.getYear(), 
-                 _archiveEndTime.getMonth(),
-                 _archiveEndTime.getDay());
-  QTime endTime(_archiveEndTime.getHour(),
-                 _archiveEndTime.getMin(),
-                 _archiveEndTime.getSec());
-  QDateTime endDateTime(endDate, endTime);
-  _archiveEndTimeEdit->setDateTime(endDateTime);
-  connect(_archiveEndTimeEdit, SIGNAL(dateTimeChanged(const QDateTime &)), 
-          this, SLOT(_setArchiveEndTimeFromGui(const QDateTime &)));
-  _archiveEndTimeEdit->setToolTip("End time of archive period");
-  
-  // fwd and back buttons
-
-  _back1 = new QPushButton(timeLower);
-  _back1->setText("<");
-  connect(_back1, SIGNAL(clicked()), this, SLOT(_goBack1()));
-  _back1->setToolTip("Go back by 1 file");
-  
-  _fwd1 = new QPushButton(timeLower);
-  _fwd1->setText(">");
-  connect(_fwd1, SIGNAL(clicked()), this, SLOT(_goFwd1()));
-  _fwd1->setToolTip("Go forward by 1 file");
-    
-  _backPeriod = new QPushButton(timeLower);
-  _backPeriod->setText("<<");
-  connect(_backPeriod, SIGNAL(clicked()), this, SLOT(_goBackPeriod()));
-  _backPeriod->setToolTip("Go back by the archive time period");
-  
-  _fwdPeriod = new QPushButton(timeLower);
-  _fwdPeriod->setText(">>");
-  connect(_fwdPeriod, SIGNAL(clicked()), this, SLOT(_goFwdPeriod()));
-  _fwdPeriod->setToolTip("Go forward by the archive time period");
-
-  // accept cancel buttons
-
-  QPushButton *acceptButton = new QPushButton(timeUpper);
-  acceptButton->setText("Accept");
-  QPalette acceptPalette = acceptButton->palette();
-  acceptPalette.setColor(QPalette::Active, QPalette::Button, Qt::green);
-  acceptButton->setPalette(acceptPalette);
-  connect(acceptButton, SIGNAL(clicked()), this, SLOT(_acceptGuiTimes()));
-  acceptButton->setToolTip("Accept the selected start and end times");
-
-  QPushButton *cancelButton = new QPushButton(timeUpper);
-  cancelButton->setText("Cancel");
-  QPalette cancelPalette = cancelButton->palette();
-  cancelPalette.setColor(QPalette::Active, QPalette::Button, Qt::red);
-  cancelButton->setPalette(cancelPalette);
-  connect(cancelButton, SIGNAL(clicked()), this, SLOT(_cancelGuiTimes()));
-  cancelButton->setToolTip("Cancel the selected start and end times");
-    
-  // add time widgets to layout
-  
-  int stretch = 0;
-  timeUpperLayout->addWidget(cancelButton, stretch, Qt::AlignRight);
-  timeUpperLayout->addWidget(_archiveStartTimeEdit, stretch, Qt::AlignRight);
-  timeUpperLayout->addWidget(_selectedTimeLabel, stretch, Qt::AlignCenter);
-  timeUpperLayout->addWidget(_archiveEndTimeEdit, stretch, Qt::AlignLeft);
-  timeUpperLayout->addWidget(acceptButton, stretch, Qt::AlignLeft);
-  
-  timeLowerLayout->addWidget(_backPeriod, stretch, Qt::AlignRight);
-  timeLowerLayout->addWidget(_back1, stretch, Qt::AlignRight);
-  timeLowerLayout->addWidget(_timeSlider, stretch, Qt::AlignCenter);
-  timeLowerLayout->addWidget(_fwd1, stretch, Qt::AlignLeft);
-  timeLowerLayout->addWidget(_fwdPeriod, stretch, Qt::AlignLeft);
-
   // connect slots for time slider
-  
-  connect(_timeSlider, SIGNAL(actionTriggered(int)),
-          this, SLOT(_timeSliderActionTriggered(int)));
-  
-  connect(_timeSlider, SIGNAL(valueChanged(int)),
-          this, SLOT(_timeSliderValueChanged(int)));
-  
-  connect(_timeSlider, SIGNAL(sliderReleased()),
-          this, SLOT(_timeSliderReleased()));
 
-  connect(_timeSlider, SIGNAL(sliderPressed()),
-          this, SLOT(_timeSliderPressed()));
+  connect(_timeNavView, &TimeNavView::newStartEndTime,
+          this, &PolarManager::startEndTimeChanged);
+  
+  connect(_timeNavView, &TimeNavView::resetStartEndTime,
+          this, &PolarManager::resetStartEndTime);
+  
+  connect(_timeNavView, &TimeNavView::newTimeIndexSelected,
+          this, &PolarManager::newTimeSelected);
+
+//  connect(_timeNavView, SIGNAL(sliderPressed()),
+//          this, SLOT(_timeSliderPressed()));
 
 }
 
-/////////////////////////////////////
-// show the time controller dialog
+void PolarManager::resetStartEndTime() {
+  _timeNavController->updateGui();
 
-void PolarManager::_showTimeControl()
-{
+}
 
-  if (_timeControl) {
-    if (_timeControl->isVisible()) {
-      _timeControl->setVisible(false);
-    } else {
-      if (!_timeControlPlaced) {
-        _timeControl->setVisible(true);
-        QPoint pos;
-        pos.setX(x() + 
-                 (frameGeometry().width() / 2) -
-                 (_timeControl->width() / 2));
-        pos.setY(y() + frameGeometry().height());
-        _timeControl->move(pos);
-      }
-      _timeControl->setVisible(true);
-      _timeControl->raise();
-    }
+void PolarManager::newTimeSelected(int index) {
+  _timeNavController->timeSliderValueChanged(index);
+  _readDataFile2();
+  _plotArchiveData();
+}
+
+void PolarManager::startEndTimeChanged(int startYear, int startMonth, int startDay,
+                       int startHour, int startMinute, int startSecond,
+                       int endYear, int endMonth, int endDay,
+                       int endHour, int endMinute, int endSecond) {
+  try  {
+    _timeNavController->_setArchiveStartEndTimeFromGui(startYear, startMonth, startDay,
+                       startHour, startMinute, startSecond,
+                       endYear, endMonth, endDay,
+                       endHour, endMinute, endSecond);
+  } catch (std::invalid_argument &ex) {
+    errorMessage("Error", ex.what());
   }
 }
 
-/////////////////////////////////////
-// place the time controller dialog
-
+void PolarManager::_showTimeControl()
+{
+  if (_timeNavView) {
+    _timeNavView->showTimeControl();
+  }
+}
+/*
 void PolarManager::_placeTimeControl()
 {
 
@@ -2985,92 +2765,43 @@ void PolarManager::_placeTimeControl()
     }
   }
 }
+*/
 
-///////////////////////////////////////////////////////////////////////////////
-// print time slider actions for debugging
 
-void PolarManager::_timeSliderActionTriggered(int action) {
-  if (_params->debug >= Params::DEBUG_VERBOSE) {
-    switch (action) {
-      case QAbstractSlider::SliderNoAction:
-        cerr << "SliderNoAction action in _timeSliderActionTriggered" << endl;
-        break;
-      case QAbstractSlider::SliderSingleStepAdd: 
-        cerr << "SliderSingleStepAdd action in _timeSliderActionTriggered" << endl;
-        break; 
-      case QAbstractSlider::SliderSingleStepSub:	
-        cerr << "SliderSingleStepSub action in _timeSliderActionTriggered" << endl;
-        break;
-      case QAbstractSlider::SliderPageStepAdd:
-        cerr << "SliderPageStepAdd action in _timeSliderActionTriggered" << endl;
-        break;	
-      case QAbstractSlider::SliderPageStepSub:
-        cerr << "SliderPageStepSub action in _timeSliderActionTriggered" << endl;
-        break;	
-      case QAbstractSlider::SliderToMinimum:
-        cerr << "SliderToMinimum action in _timeSliderActionTriggered" << endl;
-        break;	
-      case QAbstractSlider::SliderToMaximum:
-        cerr << "SliderToMaximum action in _timeSliderActionTriggered" << endl;
-        break;	
-      case QAbstractSlider::SliderMove:
-        cerr << "SliderMove action in _timeSliderActionTriggered" << endl;
-        break;
-      default: 
-        cerr << "unknown action in _timeSliderActionTriggered" << endl;
+// return true, if ok to proceed; false to Cancel
+bool PolarManager::_checkForUnsavedBatchEdits() {
+  bool okToProceed = true;
+
+/*
+  // TODO: how to detect this???
+  if (_timeNavController->isSelectedFileInTempDir()) {
+
+    int ret = saveDiscardMessage("Archive files have been modified.",
+       "What do you want to do?");
+    switch (ret) {
+      case QMessageBox::Save:
+          _saveTempDir();
+          okToProceed = false;   
+          break;
+      case QMessageBox::Discard:
+          // Don't Save was clicked
+          break;
+      case QMessageBox::Cancel:
+          // Cancel was clicked
+          okToProceed = false;
+          break;
+      case QMessageBox::Apply:
+          // Overwrite original was clicked
+          // _overwriteOriginalWithTempDir();
+          okToProceed = false;
+          break;
+      default:
+          // should never be reached
+          break;
     }
-    cerr << "timeSliderActionTriggered, value: " << _timeSlider->value() << endl;
   }
-} 
-
-void PolarManager::_timeSliderValueChanged(int value) 
-{
-  if (value < 0 || value > (int) _archiveFileList.size() - 1) {
-    return;
-  }
-  // get path for this value
-  string path = _archiveFileList[value];
-  // get time for this path
-  RadxTime pathTime;
-  NcfRadxFile::getTimeFromPath(path, pathTime);
-  // set selected time
-  _selectedTime = pathTime;
-  _setGuiFromSelectedTime();
-  if (_params->debug >= Params::DEBUG_VERBOSE) {
-    cerr << "Time slider changed, value: " << value << endl;
-  }
-}
-
-void PolarManager::_timeSliderReleased() 
-{
-  int value = _timeSlider->value();
-  if (value < 0 || value > (int) _archiveFileList.size() - 1) {
-    return;
-  }
-  // get path for this value
-  string path = _archiveFileList[value];
-  // get time for this path
-  RadxTime pathTime;
-  NcfRadxFile::getTimeFromPath(path, pathTime);
-  // set selected time
-  _selectedTime = pathTime;
-  _setGuiFromSelectedTime();
-  // request data
-  if (_archiveScanIndex != value) {
-    _archiveScanIndex = value;
-    _setArchiveRetrievalPending();
-  }
-  if (_params->debug >= Params::DEBUG_VERBOSE) {
-    cerr << "Time slider released, value: " << value << endl;
-  }
-}
-
-void PolarManager::_timeSliderPressed() 
-{
-  int value = _timeSlider->value();
-  if (_params->debug >= Params::DEBUG_VERBOSE) {
-    cerr << "Time slider released, value: " << value << endl;
-  }
+*/
+  return okToProceed;
 }
 
 ////////////////////////////////////////////////////
@@ -3081,17 +2812,23 @@ void PolarManager::_timeSliderPressed()
 void PolarManager::_openFile()
 {
   LOG(DEBUG) << "enter";
+
+  bool okToProceed = _checkForUnsavedBatchEdits();
+  if (!okToProceed) return;
+
   // seed with files for the day currently in view
   // generate like this: *yyyymmdd*
-  string pattern = _archiveStartTime.getDateStrPlain();
-  QString finalPattern = "All Files (*);; Cfradial (*.nc);; All files (*";
-  finalPattern.append(pattern.c_str());
-  finalPattern.append("*)");
+  //string pattern = _archiveStartTime.getDateStrPlain();
+  QString finalPattern = "All Files (*);; Cfradial (*.nc);; All files (*)";
+  //finalPattern.append(pattern.c_str());
+  //finalPattern.append("*)");
 
   QString inputPath = "/"; // QDir::currentPath();
   // get the path of the current file, if available 
-  if (_archiveFileList.size() > 0) {
-    QDir temp(_archiveFileList[0].c_str());
+  string currentFile = _timeNavController->getSelectedArchiveFile();
+  if (!currentFile.empty()) {
+  //if (_archiveFileList.size() > 0) {
+    QDir temp(currentFile.c_str());
     inputPath = temp.absolutePath();
   } 
 
@@ -3105,6 +2842,12 @@ void PolarManager::_openFile()
   if (filename.isNull() || filename.isEmpty()) {
     return;
   }
+
+  // update the time navigation mechanism; TODO: move this to signal/slot
+  //updateTimeNavigation(fileList, false);
+  // emit fileOpened();
+  //_timeNavController->fileOpened();  let the timeNav class handle this.
+  // end fileOpened actions.
 
   vector<string> fileList;
   fileList.push_back(filename.toStdString());
@@ -3127,6 +2870,10 @@ void PolarManager::_openFile()
     boundaryPointEditorView->setVisible(false);
   }
 
+  _timeNavController->setSliderPosition();
+  string path = _timeNavController->getSelectedPath();
+  _undoRedoController->reset(path, _timeNavController->getNFiles());
+
   LOG(DEBUG) << "exit";
 }
 
@@ -3138,89 +2885,54 @@ void PolarManager::_readDataFile(vector<string> *selectedFields) {
   } else {
     QMessageBox::information(this, "Status", "reading data ...");
 
+    //_displayFieldController->clearAllFields();
     _updateDisplayFields(selectedFields);
   //_setupDisplayFields(allFieldNames);
      // trying this ... to get the data from the file selected
-    _setArchiveRetrievalPending();
-
+    //_setArchiveRetrievalPending();
+    
+    _readDataFile2();
+    /*
     try {
       _getArchiveData();
       _setupRayLocation();
-      //_displayFieldController->setSelectedField(selectedFields->at(0));
-      _sweepController->clearSweepRadioButtons();
-      _sweepController->createSweepRadioButtons();
+
     } catch (FileIException &ex) { 
       this->setCursor(Qt::ArrowCursor);
       // _timeControl->setCursor(Qt::ArrowCursor);
       return;
     }
-  
-/*
-  // now update the time controller window
-  QDateTime now = QDateTime::currentDateTime();  
-  //QDateTime epoch(QDate(1970, 1, 1), QTime(0, 0, 0));
-  _setArchiveStartTimeFromGui(now);
-
-  _setArchiveEndTimeFromGui(now);
-  
-  _archiveStartTime = _guiStartTime;
-  _archiveEndTime = _guiEndTime;
-  QFileInfo fileInfo(filename);
-  string absolutePath = fileInfo.absolutePath().toStdString();
-  if (_params->debug >= Params::DEBUG_VERBOSE) {
-    cerr << "changing to path " << absolutePath << endl;
-  }
-//  loadArchiveFileList(dir.absolutePath());
-
-  RadxTimeList timeList;
-  timeList.setDir(absolutePath);
-  timeList.setModeInterval(_archiveStartTime, _archiveEndTime);
-  if (timeList.compile()) {
-    cerr << "ERROR - PolarManager::openFile()" << endl;
-    cerr << "  " << timeList.getErrStr() << endl;
-  }
-
-  //vector<string> pathList = timeList.getPathList();
-  //if (pathList.size() <= 0) {
-  //  cerr << "ERROR - PolarManager::openFile()" << endl;
-  //  cerr << "  pathList is empty" << endl;
-  //  cerr << "  " << timeList.getErrStr() << endl;
-  //} else {
-  //  if (_params->debug >= Params::DEBUG_VERBOSE) {
-  //    cerr << "pathList is NOT empty" << endl;
-  //    for(vector<string>::const_iterator i = pathList.begin(); i != pathList.end(); ++i) {
-  //     cerr << *i << endl;
-  //    }
-  //    cerr << endl;
-  //  }
-  
-    setArchiveFileList(fileList, false); // pathList, false);
-
-    // now fetch the first time and last time from the directory
-    // and set these values in the time controller display
-
-    RadxTime firstTime;
-    RadxTime lastTime;
-    timeList.getFirstAndLastTime(firstTime, lastTime);
-    if (_params->debug >= Params::DEBUG_VERBOSE) {
-      cerr << "first time " << firstTime << endl;
-      cerr << "last time " << lastTime << endl;
-    }
-    // convert RadxTime to QDateTime 
-    _archiveStartTime = firstTime;
-    _archiveEndTime = lastTime;
-    _setGuiFromArchiveStartTime();
-    _setGuiFromArchiveEndTime();
-  //} // end else pathList is not empty
-
-      // set initial field to 0
-
-      // _changeField(0, false);
-      //_reconcileDisplayFields();
-*/
+    */
     LOG(DEBUG) << "exit";
   }
 }
+
+void PolarManager::_readDataFile2() {
+
+    try {
+      _getArchiveData();
+      _setupRayLocation();
+
+    } catch (FileIException &ex) { 
+      this->setCursor(Qt::ArrowCursor);
+      // _timeControl->setCursor(Qt::ArrowCursor);
+      return;
+    }
+}
+
+void PolarManager::_readDataFile2(string &inputPath) {
+
+    try {
+      _getArchiveData(inputPath);
+      _setupRayLocation();
+
+    } catch (FileIException &ex) { 
+      this->setCursor(Qt::ArrowCursor);
+      // _timeControl->setCursor(Qt::ArrowCursor);
+      return;
+    }
+}
+
 /*
 void PolarManager::_reconcileDisplayFields() {
 
@@ -3268,13 +2980,17 @@ void PolarManager::closeFieldListDialog(bool clicked) {
 
 void PolarManager::_saveFile()
 {
-  
+  //if (_timeNavController->isSelectedFileInTempDir()) {
+  //  _saveTempDir();
+  //}
+
   QString finalPattern = "All files (*.nc)";
 
   QString inputPath = QDir::currentPath();
   // get the path of the current file, if available 
-  if (_archiveFileList.size() > 0) {
-    QDir temp(_archiveFileList[0].c_str());
+  string currentFile = _timeNavController->getSelectedArchiveFile();
+  if (!currentFile.empty()) {  
+    QDir temp(currentFile.c_str());
     inputPath = temp.absolutePath();
   } 
 
@@ -3294,15 +3010,17 @@ void PolarManager::_saveFile()
     // TODO: hold it! the save message should
     // go to the Model (Data) level because
     // we'll be using Radx utilities.
-    // 
-    RadxFile outFile;
+    
     try {
       LOG(DEBUG) << "writing to file " << name;
-      outFile.writeToPath(_vol, name);
+      DataModel *dataModel = DataModel::Instance();
+      dataModel->writeData(name);
+      _unSavedEdits = false;
     } catch (FileIException &ex) {
       this->setCursor(Qt::ArrowCursor);
       return;
     }
+    
   }
 }
 
@@ -3321,6 +3039,8 @@ void PolarManager::_showFileChooserDialog()
 
 }
 
+/*
+moved to TimeNavMVC classes
 ////////////////////////////////////////////////////////
 // set times from gui widgets
 
@@ -3372,40 +3092,7 @@ void PolarManager::_setGuiFromArchiveStartTime()
   _guiStartTime = _archiveStartTime;
 }
 
-////////////////////////////////////////////////////////
-// set gui widget from archive end time
 
-void PolarManager::_setGuiFromArchiveEndTime()
-{
-  if (!_archiveEndTimeEdit) {
-    return;
-  }
-  QDate date(_archiveEndTime.getYear(), 
-             _archiveEndTime.getMonth(),
-             _archiveEndTime.getDay());
-  QTime time(_archiveEndTime.getHour(),
-             _archiveEndTime.getMin(),
-             _archiveEndTime.getSec());
-  QDateTime datetime(date, time);
-  _archiveEndTimeEdit->setDateTime(datetime);
-  _guiEndTime = _archiveEndTime;
-}
-
-////////////////////////////////////////////////////////
-// set gui selected time label
-
-void PolarManager::_setGuiFromSelectedTime()
-{
-  char text[128];
-  snprintf(text, 128, "%.4d/%.2d/%.2d %.2d:%.2d:%.2d",
-           _selectedTime.getYear(),
-           _selectedTime.getMonth(),
-           _selectedTime.getDay(),
-           _selectedTime.getHour(),
-           _selectedTime.getMin(),
-           _selectedTime.getSec());
-  _selectedTimeLabel->setText(text);
-}
 
 ////////////////////////////////////////////////////////
 // set archive start time
@@ -3489,41 +3176,42 @@ void PolarManager::_goFwdPeriod()
   _timeSlider->setSliderPosition(_archiveScanIndex);
 
 }
+*/
 
 ////////////////////////////////////////////////////////
 // set for pending archive retrieval
 
-void PolarManager::_setArchiveRetrievalPending()
-{
-  _archiveRetrievalPending = true;
-}
+//void PolarManager::_setArchiveRetrievalPending()
+//{
+  //_archiveRetrievalPending = true;
+//}
 
 /////////////////////////////////////
 // clear display widgets
 
-void PolarManager::_clear()
-{
-  if (_ppi) {
-    _ppi->clear();
-  }
+//void PolarManager::_clear()
+//{
+  //if (_ppi) {
+  //  _ppi->clear();
+  //}
   //if (_rhi) {
   //  _rhi->clear();
   //}
-}
+//}
 
 /////////////////////////////////////
 // set archive mode
 
-void PolarManager::_setArchiveMode(bool state)
-{
-  _archiveMode = state;
-  _setSweepPanelVisibility();
+//void PolarManager::_setArchiveMode(bool state)
+//{
+//  _archiveMode = state;
+//  _setSweepPanelVisibility();
 
-  if (_ppi) {
-    _ppi->setArchiveMode(state);
-  }
+//  if (_ppi) {
+//    _ppi->setArchiveMode(state);
+//  }
 
-}
+//}
 
 ////////////////////////////////////////////////////////
 // set modes for retrieving the data
@@ -3532,9 +3220,9 @@ void PolarManager::_setArchiveMode(bool state)
 /////////////////////////////////////
 // activate archive rendering
 
-void PolarManager::_activateArchiveRendering()
-{
-  _clear();
+//void PolarManager::_activateArchiveRendering()
+//{
+//  _clear();
   //_displayFieldController->renderFields();
   //if (_ppi) {
     //_fieldRendererController->performRendering(0);
@@ -3544,14 +3232,14 @@ void PolarManager::_activateArchiveRendering()
   //  _rhi->activateArchiveRendering();
     //_fieldRendererController->performRendering(0); // activateArchiveRendering();
   //}
-}
+//}
 
 /////////////////////////////////////////////////////
 // creating image files in archive mode
 
 void PolarManager::_createArchiveImageFiles()
 {
-  
+  /*
   if (_params->images_creation_mode ==
       Params::CREATE_IMAGES_THEN_EXIT) {
     
@@ -3591,7 +3279,7 @@ void PolarManager::_createArchiveImageFiles()
     } // stime
     
   } // if (_params->images_creation_mode ...
-
+  */
 }
 
 /////////////////////////////////////////////////////
@@ -3854,7 +3542,7 @@ void PolarManager::_saveImageToFile(bool interactive)
 
 
 void PolarManager::ShowContextMenu(const QPoint &pos) {
-  _ppi->ShowContextMenu(pos, &_vol);
+  //_ppi->ShowContextMenu(pos, &_vol);
 }
 
 
@@ -3883,6 +3571,9 @@ void PolarManager::_howto()
   QMessageBox::about(this, tr("Howto dialog"), tr(text.c_str()));
 }
 
+//void PolarManager::boundaryColorChanged(QColor newColor) {
+//  boundaryPointEditorControl->setBoundaryColor(newColor.toStdString());
+//}
 
 void PolarManager::boundaryCircleRadiusChanged(int value) 
 {
@@ -3905,7 +3596,7 @@ void PolarManager::boundaryBrushRadiusChanged(int value)
     boundaryPointEditorControl->setBrushRadius(value);
     //if (resizeExistingCircle) { //resize existing circle
       // TODO: somehow get the worldPlot and painter from ppiWidget
-     // _ppi->showSelectedField(); // refresh/replot->BoundaryPointEditor::Instance()->draw(_zoomWorld, painter); 
+      _ppi->showSelectedField(); // refresh/replot->BoundaryPointEditor::Instance()->draw(_zoomWorld, painter); 
       //boundaryPointEditorControl->draw(worldPlot, painter);
       //WorldPlot zoomWorld = _ppi->getZoomWorld();
       //QPainter painter = _ppi->getPainter();
@@ -3919,8 +3610,10 @@ void PolarManager::drawBoundary(WorldPlot &zoomWorld, QPainter &painter) {
   }
 }
 
+// I'm not sure this is used???
 void PolarManager::mouseMoveEvent(int worldX, int worldY)
 {  
+  /*
   if (boundaryPointEditorControl != NULL) {
 
     bool redraw = boundaryPointEditorControl->evaluatePoint(worldX, worldY);
@@ -3928,6 +3621,7 @@ void PolarManager::mouseMoveEvent(int worldX, int worldY)
       _ppi->showSelectedField(); 
     }
   }
+  */
 }
 
 bool PolarManager::evaluateCursor(bool isShiftKeyDown) {
@@ -3945,32 +3639,31 @@ bool PolarManager::evaluateRange(double xRange) {
   }
 }
 
-void PolarManager::evaluateMouseRelease(int mouseReleaseX, int mouseReleaseY,
+bool PolarManager::isOverBoundaryPoint(double worldX, double worldY) {
+  if (boundaryPointEditorControl != NULL) {
+    return boundaryPointEditorControl->isOverBoundaryPoint(worldX, worldY);
+  } else {
+    return false;
+  }
+}
+
+bool PolarManager::moveBoundaryPoint(double worldPressX, double worldPressY,
+  double worldReleaseX, double worldReleaseY) {
+  bool redraw = false;
+  if (boundaryPointEditorControl != NULL) {
+    redraw = boundaryPointEditorControl->moveBoundaryPoint(worldPressX, worldPressY,
+      worldReleaseX, worldReleaseY);
+  }
+  return redraw;
+}
+
+void PolarManager::addDeleteBoundaryPoint(double mouseReleaseX, double mouseReleaseY,
   bool isShiftKeyDown)
 {    
     // If boundary editor active, then interpret boundary mouse release event
   if (boundaryPointEditorControl != NULL) {
-    boundaryPointEditorControl->evaluateMouseRelease(mouseReleaseX, mouseReleaseY,
-      isShiftKeyDown);
-/*
-      if (editor->getCurrentTool() == BoundaryToolType::polygon) {
-        if (!editor->isAClosedPolygon()) {
-          editor->addPoint(_worldReleaseX, _worldReleaseY);
-        } else { //polygon finished, user may want to insert/delete a point
-          editor->checkToAddOrDelPoint(_worldReleaseX,
-                                       _worldReleaseY);
-        }
-      } else if (editor->getCurrentTool() == BoundaryToolType::circle) {
-        if (editor->isAClosedPolygon()) {
-          editor->checkToAddOrDelPoint(_worldReleaseX,
-                                       _worldReleaseY);
-        } else {
-          editor->makeCircle(_worldReleaseX,
-                             _worldReleaseY,
-                             editor->getCircleRadius());
-        }
-      }  
-      */  
+    boundaryPointEditorControl->addDeleteBoundaryPoint(mouseReleaseX, mouseReleaseY,
+      isShiftKeyDown); 
   }
 } 
 
@@ -4038,13 +3731,14 @@ void PolarManager::onBoundaryEditorListItemClicked(QListWidgetItem* item)
 		_ppi->update();   //forces repaint which clears existing polygon
 	}
 }
+*/
 
 void PolarManager::_clearBoundaryEditorClick()
 {
-	BoundaryPointEditor::Instance()->clear();
+	//BoundaryPointEditor::Instance()->clear();
 	_ppi->update();   //forces repaint which clears existing polygon
 }
-*/
+
 
 void PolarManager::saveBoundaryEvent(int boundaryIndex)
 {
@@ -4052,15 +3746,12 @@ void PolarManager::saveBoundaryEvent(int boundaryIndex)
 
   // get selected field name
   string currentFieldName = _displayFieldController->getSelectedFieldName();
-  int currentSweepIndex = _sweepController->getSelectedIndex();
-  if (_archiveFileList.size() > 0) {
-    string radarFilePath = _archiveFileList.at(0);
+  int currentSweepIndex = _sweepController->getSelectedNumber();
+  string currentFile = _timeNavController->getSelectedArchiveFile();
+  if (!currentFile.empty()) {
+
+    string radarFilePath = currentFile;
   
-	//string text = "Boundary" + to_string(boundaryIndex);
-	//string outputDir;
-	//string fileExt = _boundaryEditorList->currentItem()->text().toUtf8().constData();
-	//string path = _getOutputPath(false, outputDir, fileExt);
-	//boundaryPointEditorControl->save(path);
     try {
       boundaryPointEditorControl->save(boundaryIndex, currentFieldName, 
         currentSweepIndex, radarFilePath);
@@ -4068,37 +3759,41 @@ void PolarManager::saveBoundaryEvent(int boundaryIndex)
       errorMessage("Save Boundary Error", ex.what());
     }
   } else {
-    errorMessage("Save Boundary Error", "no File Path found");
+    errorMessage("Save Boundary Error",
+      "cannot save boundary, because no open archive file");
   }
   LOG(DEBUG) << "exit";
 }
 
+
 void PolarManager::loadBoundaryEvent(int boundaryIndex)
 {
   LOG(DEBUG) << "enter";
-
-  // get selected field name
+  //if (boundaryIndex > 0) {
+    //  saved boundary
+    // get selected field name
   string currentFieldName = _displayFieldController->getSelectedFieldName();
-  int currentSweepIndex = _sweepController->getSelectedIndex();
-  if (_archiveFileList.size() > 0) {
-    string radarFilePath = _archiveFileList.at(0);
-  
-  //string text = "Boundary" + to_string(boundaryIndex);
-  //string outputDir;
-  //string fileExt = _boundaryEditorList->currentItem()->text().toUtf8().constData();
-  //string path = _getOutputPath(false, outputDir, fileExt);
-  //boundaryPointEditorControl->save(path);
+  int currentSweepIndex = _sweepController->getSelectedNumber();
+  string currentFile = _timeNavController->getSelectedArchiveFile();
+
+  if (!currentFile.empty()) {
+
+  string radarFilePath = currentFile;
+
     bool successful = boundaryPointEditorControl->load(boundaryIndex, 
       currentFieldName, currentSweepIndex, radarFilePath);
     if (!successful) {
       string msg = "could not load boundary for " + currentFieldName;
       errorMessage("Load Boundary Error", msg.c_str());
-    } else {
-      // TODO: update / draw Boundary on image??
     }
   } else {
-    errorMessage("Save Boundary Error", "no File Path found");
+    errorMessage("Load Boundary Error",
+     "cannot load boundary, because no open archive file");
   }
+
+  // repaint which clears the existing boundary
+  _ppi->update(); // showSelectedField();   
+
   LOG(DEBUG) << "exit";
 }
 
@@ -4109,9 +3804,13 @@ void PolarManager::refreshBoundaries()
 
     // get selected field name
     string currentFieldName = _displayFieldController->getSelectedFieldName();
-    int currentSweepIndex = _sweepController->getSelectedIndex();
-    if (_archiveFileList.size() > 0) {
-      string radarFilePath = _archiveFileList.at(0);
+    int currentSweepIndex = _sweepController->getSelectedNumber();
+
+    string currentFile = _timeNavController->getSelectedArchiveFile();
+
+    if (!currentFile.empty()) {
+
+      string radarFilePath = currentFile;    
     
       boundaryPointEditorControl->refreshBoundaries(
         radarFilePath, 
@@ -4134,19 +3833,16 @@ void PolarManager::showBoundaryEditor()
   if (boundaryPointEditorView == NULL) {
     boundaryPointEditorView = new BoundaryPointEditorView(this);
 
-    // install event filter to catch when the spreadsheet is closed
+    // install event filter to catch when the boundary point enditor is closed
     CloseEventFilter *closeFilter = new CloseEventFilter(boundaryPointEditorView);
     boundaryPointEditorView->installEventFilter(closeFilter);
 
     boundaryView = new BoundaryView();
-    // create the model
-
-    //SpreadSheetModel *model = new SpreadSheetModel(const_cast<RadxRay *> (closestRayToEdit));
+    // create the model in the controller
     
     // create the controller
     boundaryPointEditorControl = 
-      new BoundaryPointEditor(boundaryPointEditorView,
-        boundaryView);
+      new BoundaryPointEditor(boundaryPointEditorView, boundaryView);
 
     // connect some signals and slots in order to retrieve information
     // and send changes back to display
@@ -4156,22 +3852,26 @@ void PolarManager::showBoundaryEditor()
     connect(boundaryPointEditorView, SIGNAL(boundaryCircleRadiusChanged(int)),
       this, SLOT(boundaryCircleRadiusChanged(int)));  
     connect(boundaryPointEditorView, SIGNAL(boundaryBrushRadiusChanged(int)),
-      this, SLOT(boundaryBrushRadiusChanged(int)));  
+      this, SLOT(boundaryBrushRadiusChanged(int))); 
+
+    connect(boundaryPointEditorControl, SIGNAL(clearBoundaryClicked()),
+      this, SLOT(_clearBoundaryEditorClick())); 
 
     connect(boundaryPointEditorView, SIGNAL(refreshBoundariesEvent()),
       this, SLOT(refreshBoundaries()));  
 
-    connect(boundaryPointEditorView, SIGNAL(saveBoundary(int )), 
+    connect(boundaryPointEditorView, SIGNAL(saveBoundary(int)), 
       this, SLOT(saveBoundaryEvent(int)));
-    connect(boundaryPointEditorControl, SIGNAL(loadBoundary(int )), 
+    connect(boundaryPointEditorView, SIGNAL(loadBoundary(int)), 
       this, SLOT(loadBoundaryEvent(int)));
 
-  connect(boundaryPointEditorView, SIGNAL(userClickedPolygonButton()),
-    boundaryPointEditorControl, SLOT(userClickedPolygonButton()));
-  connect(boundaryPointEditorView, SIGNAL(userClickedCircleButton()),
-    boundaryPointEditorControl, SLOT(userClickedCircleButton()));
-  connect(boundaryPointEditorView, SIGNAL(userClickedBrushButton()),
-    boundaryPointEditorControl, SLOT(userClickedBrushButton()));  
+// done in BoundaryPointEditor ...
+  //connect(boundaryPointEditorView, SIGNAL(userClickedPolygonButton()),
+  //  boundaryPointEditorControl, SLOT(userClickedPolygonButton()));
+  //connect(boundaryPointEditorView, SIGNAL(userClickedCircleButton()),
+  //  boundaryPointEditorControl, SLOT(userClickedCircleButton()));
+  //connect(boundaryPointEditorView, SIGNAL(userClickedBrushButton()),
+  //  boundaryPointEditorControl, SLOT(userClickedBrushButton()));  
     
     //boundaryPointEditorView->init();
     //boundaryPointEditorView->show();
@@ -4476,286 +4176,8 @@ void PolarManager::_createStatusPanel()
 
 }
 
-/* moved to DisplayFieldView
-//////////////////////////////////////////////
-// create the field panel
 
-void PolarManager::_createFieldPanel()
-{
-  
-  Qt::Alignment alignCenter(Qt::AlignCenter);
-  Qt::Alignment alignRight(Qt::AlignRight);
-  
-  int fsize = _params->label_font_size;
-  int fsize2 = _params->label_font_size + 2;
-  int fsize4 = _params->label_font_size + 4;
-  int fsize6 = _params->label_font_size + 6;
-
-  _fieldPanel = new QGroupBox(_main);
-  _fieldGroup = new QButtonGroup;
-  _fieldsLayout = new QGridLayout(_fieldPanel);
-  _fieldsLayout->setVerticalSpacing(5);
-
-  int row = 0;
-  int nCols = 3;
-  if (_haveFilteredFields) {
-    nCols = 4;
-  }
-
-  _displayFieldController->setSelectedField(0);
-  _selectedField = _displayFieldController->getSelectedField(); //_fields[0];
-  _selectedLabel = _selectedField->getLabel(); //_fields[0]->getLabel();
-  _selectedName = _selectedField->getName(); // _fields[0]->getName();
-  //  _selectedField = _fields[0];
-  //_selectedLabel = _fields[0]->getLabel();
-  //_selectedName = _fields[0]->getName();
-  _selectedLabelWidget = new QLabel(_selectedLabel.c_str(), _fieldPanel);
-  QFont font6 = _selectedLabelWidget->font();
-  font6.setPixelSize(fsize6);
-  _selectedLabelWidget->setFont(font6);
-  _fieldsLayout->addWidget(_selectedLabelWidget, row, 0, 1, nCols, alignCenter);
-
-  row++;
-
-
-  QFont font4 = _selectedLabelWidget->font();
-  font4.setPixelSize(fsize4);
-  QFont font2 = _selectedLabelWidget->font();
-  font2.setPixelSize(fsize2);
-  QFont font = _selectedLabelWidget->font();
-  font.setPixelSize(fsize);
-  
-
-  QLabel dummy;
-  QFont font = dummy.font();
-  QFont font2 = dummy.font();
-  QFont font4 = dummy.font();
-
-  _valueLabel = new QLabel("", _fieldPanel);
-  _valueLabel->setFont(font);
-  _fieldsLayout->addWidget(_valueLabel, row, 0, 1, nCols, alignCenter);
-  row++;
-
-  QLabel *fieldHeader = new QLabel("FIELD LIST", _fieldPanel);
-  fieldHeader->setFont(font);
-  _fieldsLayout->addWidget(fieldHeader, row, 0, 1, nCols, alignCenter);
-  row++;
-
-  QLabel *nameHeader = new QLabel("Name", _fieldPanel);
-  nameHeader->setFont(font);
-  _fieldsLayout->addWidget(nameHeader, row, 0, alignCenter);
-  QLabel *keyHeader = new QLabel("HotKey", _fieldPanel);
-  keyHeader->setFont(font);
-  _fieldsLayout->addWidget(keyHeader, row, 1, alignCenter);
-  if (_haveFilteredFields) {
-    QLabel *rawHeader = new QLabel("Raw", _fieldPanel);
-    rawHeader->setFont(font);
-    _fieldsLayout->addWidget(rawHeader, row, 2, alignCenter);
-    QLabel *filtHeader = new QLabel("Filt", _fieldPanel);
-    filtHeader->setFont(font);
-    _fieldsLayout->addWidget(filtHeader, row, 3, alignCenter);
-  }
-  row++;
-  _rowOffset = row;
-
-  // add fields, one row at a time
-  // a row can have 1 or 2 buttons, depending on whether the
-  // filtered field is present
-  size_t nFields = _displayFieldController->getNFields();
-  for (size_t ifield = 0; ifield < nFields; ifield++) {
-
-    // get raw field - always present
-    
-    const DisplayField *rawField = _displayFieldController->getField(ifield); // _fields[ifield];
-    int buttonRow = rawField->getButtonRow();
-    
-    // get filt field - may not be present
-    const DisplayField *filtField = _displayFieldController->getFiltered(ifield, buttonRow);
-
-    QLabel *label = new QLabel(_fieldPanel);
-    label->setFont(font);
-    label->setText(rawField->getLabel().c_str());
-    QLabel *key = new QLabel(_fieldPanel);
-    key->setFont(font);
-    if (rawField->getShortcut().size() > 0) {
-      char text[4];
-      text[0] = rawField->getShortcut()[0];
-      text[1] = '\0';
-      key->setText(text);
-      char text2[128];
-      sprintf(text2, "Hit %s for %s, ALT-%s for filtered",
-        text, rawField->getName().c_str(), text);
-      label->setToolTip(text2);
-      key->setToolTip(text2);
-    }
-
-    QRadioButton *rawButton = new QRadioButton(_fieldPanel);
-    rawButton->setToolTip(rawField->getName().c_str());
-    if (ifield == 0) {
-      rawButton->click();
-    }
-    _fieldsLayout->addWidget(label, row, 0, alignCenter);
-    _fieldsLayout->addWidget(key, row, 1, alignCenter);
-    _fieldsLayout->addWidget(rawButton, row, 2, alignCenter);
-    _fieldGroup->addButton(rawButton, ifield);
-    // connect slot for field change
-    connect(rawButton, SIGNAL(toggled(bool)), this, SLOT(_changeFieldVariable(bool)));
-
-    _fieldButtons.push_back(rawButton);
-    if (filtField != NULL) {
-      QRadioButton *filtButton = new QRadioButton(_fieldPanel);
-      filtButton->setToolTip(filtField->getName().c_str());
-      _fieldsLayout->addWidget(filtButton, row, 3, alignCenter);
-      _fieldGroup->addButton(filtButton, ifield + 1);
-      _fieldButtons.push_back(filtButton);
-      // connect slot for field change
-      connect(filtButton, SIGNAL(toggled(bool)), this, SLOT(_changeFieldVariable(bool)));
-    }
-
-    _displayFieldController->setVisible(ifield);
-
-    if (filtField != NULL) {
-      ifield++;
-    }
-    _fieldsLayout->setRowStretch(row, 1);
-
-    row++;
-  }
-
-  //QLabel *spacerRow = new QLabel("", _fieldPanel);
-  //_fieldsLayout->addWidget(spacerRow, row, 0);
-  //_fieldsLayout->setRowStretch(row, 1);
-  //row++;
-
-  // HERE <<=== 
-  //  _lastButtonRowFixed = row; // Q: is this just the size of _fieldButtons?
-  // connect slot for field change
-  
-  //connect(_fieldGroup, SIGNAL(buttonClicked(int)),
-  //        this, SLOT(_changeField(int)));
-
-}
-
-//////////////////////////////////////////////
-// update the field panel
-
-void PolarManager::_updateFieldPanel(string newFieldName)
-{
-  LOG(DEBUG) << "enter";
-  Qt::Alignment alignCenter(Qt::AlignCenter);
-  Qt::Alignment alignRight(Qt::AlignRight);
-  
-  int fsize = _params->label_font_size;
-  int fsize2 = _params->label_font_size + 2;
-  int fsize4 = _params->label_font_size + 4;
-  int fsize6 = _params->label_font_size + 6;
-
-  int row; //  = _rowOffset;
-  int nCols = 3;
-  if (_haveFilteredFields) {
-    nCols = 4;
-  }
-  //QFont font = _selectedLabelWidget->font();
-  QLabel dummy;
-  QFont font = dummy.font();
-  font.setPixelSize(fsize);
-
-
-
-  // a row can have 1 or 2 buttons, depending on whether the
-  // filtered field is present
-
-  size_t nFields = _displayFieldController->getNFields(); // 0 - based index
-  size_t ifield = _displayFieldController->getFieldIndex(newFieldName);
-  //if (ifield < lastButtonRowFixed - 1) {
-    // field already in panel
-  //  return;
-  //}
-
-    // get raw field - always present
-    
-  DisplayField *rawField = _displayFieldController->getField(ifield); //_fields[ifield];
-  if (rawField->isHidden()) {
-    int lastButtonRowFixed = _fieldButtons.size(); // 1 - based index
-
-    row = lastButtonRowFixed + _rowOffset;
-    rawField->setButtonRow(row);
-    
-    // get filt field - may not be present
-    const DisplayField *filtField = _displayFieldController->getFiltered(ifield, -1);
-
-//----
-//    _spolDivColorMapLabel = new ClickableLabel();
-//ColorMapTemplates.cc:    // connect(cmapLabel, &ClickableLabel::clicked, this, &ParameterColorDialog::pickColorPalette);
-//ColorMapTemplates.cc:    connect(_defaultColorMapLabel,   &ClickableLabel::clicked, this, &ColorMapTemplates::defaultClicked);
-
-//---
-
-    //QLabel *label = new QLabel(_fieldPanel);
-    ClickableLabel *label = new ClickableLabel(_fieldPanel);
-    connect(label, SIGNAL(ClickableLabel::clicked), this, SLOT(contextMenuParameterColors));
-    label->setFont(font);
-    label->setText(rawField->getLabel().c_str());
-    QLabel *key = new QLabel(_fieldPanel);
-    key->setFont(font);
-    if (rawField->getShortcut().size() > 0) {
-      char text[4];
-      text[0] = rawField->getShortcut()[0];
-      text[1] = '\0';
-      key->setText(text);
-      char text2[128];
-      sprintf(text2, "Hit %s for %s, ALT-%s for filtered",
-        text, rawField->getName().c_str(), text);
-      label->setToolTip(text2);
-      key->setToolTip(text2);
-    }
-
-    QRadioButton *rawButton = new QRadioButton(_fieldPanel);
-    rawButton->setToolTip(rawField->getName().c_str());
-    //if (ifield == 0) {
-      rawButton->click();
-    //}
-    //row = buttonRow + 4;
-    _fieldsLayout->addWidget(label, row, 0, alignCenter);
-    _fieldsLayout->addWidget(key, row, 1, alignCenter);
-    _fieldsLayout->addWidget(rawButton, row, 2, alignCenter);
-    _fieldGroup->addButton(rawButton, ifield);
-    // connect slot for field change
-    connect(rawButton, SIGNAL(toggled(bool)), this, SLOT(_changeFieldVariable(bool)));
-
-    _fieldButtons.push_back(rawButton);
-    if (filtField != NULL) {
-      QRadioButton *filtButton = new QRadioButton(_fieldPanel);
-      filtButton->setToolTip(filtField->getName().c_str());
-      _fieldsLayout->addWidget(filtButton, row, 3, alignCenter);
-      _fieldGroup->addButton(filtButton, ifield + 1);
-      _fieldButtons.push_back(filtButton);
-      // connect slot for field change
-      connect(filtButton, SIGNAL(toggled(bool)), this, SLOT(_changeFieldVariable(bool)));
-    }
-
-    //if (filtField != NULL) {
-    //  ifield++;
-    //}
-
-    //QLabel *spacerRow = new QLabel("", _fieldPanel);
-    //_fieldsLayout->addWidget(spacerRow, row, 0);
-    _fieldsLayout->setRowStretch(row, 1);
-    
-    rawField->setStateVisible();
-    _displayFieldController->setSelectedField(ifield);
-
-  }
-
-  // connect slot for field change
-  
-  //connect(_fieldGroup, SIGNAL(buttonClicked(int)),
-  //        this, SLOT(_changeField(int)));
-  LOG(DEBUG) << "exit";
-}
-*/
-
-void PolarManager::contextMenuParameterColors()
+void PolarManager::ShowParameterColorDialog(QString fieldName)
 {
   
   LOG(DEBUG) << "enter";
@@ -4779,76 +4201,17 @@ void PolarManager::contextMenuParameterColors()
   connect(fieldColorController, SIGNAL(colorMapRedefineSent(string, ColorMap, QColor, QColor, QColor, QColor)),
       this, SLOT(colorMapRedefineReceived(string, ColorMap, QColor, QColor, QColor, QColor))); // THIS IS NOT CALLED!!
 
+  if (boundaryPointEditorControl != NULL) {
+    connect(fieldColorController, SIGNAL(boundaryColorSet(QColor)),
+      boundaryPointEditorControl, SLOT(boundaryColorChanged(QColor)));
+    string boundaryColor = boundaryPointEditorControl->getBoundaryColor();
+    fieldColorController->updateBoundaryColor(boundaryColor);
+  }
   fieldColorController->startUp(); 
  
   LOG(DEBUG) << "exit ";
   
 }
-
-/* Moved to DisplayFieldView
-void PolarManager::_changeFieldVariable(bool value) {
-
-  LOG(DEBUG) << " field variable changed ";
-
-  if (value) {
-    for (size_t i = 0; i < _fieldButtons.size(); i++) {
-      if (_fieldButtons.at(i)->isChecked()) {
-        LOG(DEBUG) << "_fieldButton " << i
-        << "out of " << _fieldButtons.size() 
-        << " is checked";
-        QString fieldNameQ = _fieldButtons.at(i)->text();
-        LOG(DEBUG) << "fieldname is " << fieldNameQ.toStdString();
-        _changeField(i, true);
-      }
-    }
-  }
-
-}
-*/
-
-/*
-void PolarManager::colorMapRedefineReceived(string fieldName, ColorMap newColorMap) {
-
-  LOG(DEBUG) << "enter"; 
-  
-  // connect the new color map with the field
-  // find the fieldName in the list of FieldDisplays
-  // This should save/perpetuate the color map in the DisplayField object
-  _displayFieldController->saveColorMap(fieldName, &newColorMap);
-  size_t fieldIndex = _displayFieldController->getFieldIndex(fieldName);
-  _changeField(fieldIndex, true); 
-*/
-  /*
-  bool found = false;
-  vector<DisplayField *>::iterator it;
-  int fieldId = 0;
-
-  it = _fields.begin(); 
-  while ( it != _fields.end() && !found ) {
-    DisplayField *field = *it;
-   
-    string name = field->getName();
-    if (name.compare(fieldName) == 0) {
-      found = true;
-      field->replaceColorMap(newColorMap);
-    }
-    fieldId++;
-    it++;
-  }
-  if (!found) {
-    LOG(ERROR) << fieldName;
-    LOG(ERROR) << "ERROR - field not found; no color map change";
-    // TODO: present error message box 
-  } else {
-    // look up the fieldId from the fieldName
-    // change the field variable
-    _changeField(fieldId, true); 
-  }
-  */
-/*
-  LOG(DEBUG) << "exit";
-}
-*/
 
 
 ///////////////////////////////////////////////////////
@@ -5491,147 +4854,18 @@ void PolarManager::_showClick()
   }
 }
 
-/*
-  //////////////////////////////////////////////////
-// set up field objects, with their color maps
-// use same map for raw and unfiltered fields
-// returns 0 on success, -1 on failure
-HERE ==> call this with the _params->fields at initialization 
-or move to HawkEye.cc  YES! Do this in HawkEye, the code is there, just commented.
-Then, on updateDisplayFields, check if the field is already there, before adding it.
-int PolarManager::_setupDisplayFields(
-  string colorMapDir, //  = _params->color_scale_dir,
-  vector<string> label,
-  vector<string> raw_name,
-  vector<string> filtered_name,
-  vector<string> units,
-  vector<string> color_map_path,
-  vector<string> shortcut,
-  // include in vector: _params->fields_n,
-  //const Params::field_t &pfld = _params->_fields,
-  bool debug = _params->debug,  
-  )
-{
-
-  // check for color map location
-  
-  string colorMapDir = _params->color_scale_dir;
-  Path mapDir(_params->color_scale_dir);
-  if (!mapDir.dirExists()) {
-    colorMapDir = Path::getPathRelToExec(_params->color_scale_dir);
-    mapDir.setPath(colorMapDir);
-    if (!mapDir.dirExists()) {
-      cerr << "ERROR - HawkEye" << endl;
-      cerr << "  Cannot find color scale directory" << endl;
-      cerr << "  Primary is: " << _params->color_scale_dir << endl;
-      cerr << "  Secondary is relative to binary: " << colorMapDir << endl;
-      return -1;
-    }
-    if (_params->debug) {
-      cerr << "NOTE - using color scales relative to executable location" << endl;
-      cerr << "  Exec path: " << Path::getExecPath() << endl;
-      cerr << "  Color scale dir:: " << colorMapDir << endl;
-    }
-  }
-
-  // we interleave unfiltered fields and filtered fields
-
-  for (int ifield = 0; ifield < _params->fields_n; ifield++) {
-
-    const Params::field_t &pfld = _params->_fields[ifield];
-
-    // check we have a valid label
-    
-    if (strlen(pfld.label) == 0) {
-      cerr << "WARNING - HawkEye::_setupDisplayFields()" << endl;
-      cerr << "  Empty field label, ifield: " << ifield << endl;
-      cerr << "  Ignoring" << endl;
-      continue;
-    }
-    
-    // check we have a raw field name
-    
-    if (strlen(pfld.raw_name) == 0) {
-      cerr << "WARNING - HawkEye::_setupDisplayFields()" << endl;
-      cerr << "  Empty raw field name, ifield: " << ifield << endl;
-      cerr << "  Ignoring" << endl;
-      continue;
-    }
-
-    // create color map
-    
-    string colorMapPath = colorMapDir;
-    colorMapPath += PATH_DELIM;
-    colorMapPath += pfld.color_map;
-    ColorMap map;
-    map.setName(pfld.label);
-    map.setUnits(pfld.units);
-    // TODO: the logic here is a little weird ... the label and units have been set, but are we throwing them away?
-
-    bool noColorMap = false;
-
-    if (map.readMap(colorMapPath)) {
-        cerr << "WARNING - HawkEye::_setupDisplayFields()" << endl;
-        cerr << "  Cannot read in color map file: " << colorMapPath << endl;
-        cerr << "  Looking for default color map for field " << pfld.label << endl; 
-
-        try {
-          // check here for smart color scale; look up by field name/label and
-          // see if the name is a usual parameter for a known color map
-          SoloDefaultColorWrapper sd = SoloDefaultColorWrapper::getInstance();
-          ColorMap colorMap = sd.ColorMapForUsualParm.at(pfld.label);
-          cerr << "  found default color map for " <<  pfld.label  << endl;
-          // if (_params->debug) colorMap.print(cout); // LOG(DEBUG_VERBOSE)); // cout);
-          map = colorMap;
-          // HERE: What is missing from the ColorMap object??? 
-        } catch (std::out_of_range ex) {
-          cerr << "WARNING - did not find default color map for field; using rainbow colors" << endl;
-    // Just set the colormap to a generic color map
-    // use range to indicate it needs update; update when we have access to the actual data values
-          map = ColorMap(0.0, 1.0);
-    noColorMap = true; 
-          // return -1
-        }
-    }
-
-    // unfiltered field
-
-    DisplayField *field =
-      new DisplayField(pfld.label, pfld.raw_name, pfld.units, 
-                       pfld.shortcut, map, ifield, false);
-    if (noColorMap)
-      field->setNoColorMap();
-
-    _displayFields.push_back(field);
-
-    // filtered field
-
-    if (strlen(pfld.filtered_name) > 0) {
-      string filtLabel = string(pfld.label) + "-filt";
-      DisplayField *filt =
-        new DisplayField(filtLabel, pfld.filtered_name, pfld.units, pfld.shortcut, 
-                         map, ifield, true);
-      _displayFields.push_back(filt);
-    }
-
-  } // ifield
-
-  if (_displayFields.size() < 1) {
-    cerr << "ERROR - HawkEye::_setupDisplayFields()" << endl;
-    cerr << "  No fields found" << endl;
-    return -1;
-  }
-
-  return 0;
-
-}
-*/
 
 //TODO: change model for displayFieldController
 //_displayFieldController->setModel(new DisplayFieldModel(...))
   
+// reset or sync the displayFields with those in the list
+// used for a read of new data file
+// TODO: shouldn't this go to DisplayFieldController?? just send the color map directory?
 int PolarManager::_updateDisplayFields(vector<string> *fieldNames) {
 
+  _displayFieldController->reconcileFields(fieldNames, _fieldPanel);
+
+  // TODO: not sure where this needs to happen ...
   // check for color map location
   
   string colorMapDir = _params->color_scale_dir;
@@ -5653,7 +4887,13 @@ int PolarManager::_updateDisplayFields(vector<string> *fieldNames) {
     }
   }
 
+/*
   //vector<DisplayField *> displayFields;
+
+  // There is the fieldPanel, which is a view of the DisplayFields, for selection
+  // then, there is the displayFieldController which manages the fields and all
+  // their attributes.  
+  // sometimes, we need to add a field, remove a field, and then sync the fields as in reset.
 
   //for (int ifield = 0; ifield < _params->fields_n; ifield++) {
   int ifield = (int) _displayFieldController->getNFields() + 1;
@@ -5689,13 +4929,16 @@ int PolarManager::_updateDisplayFields(vector<string> *fieldNames) {
 
 
   } // ifield
+*/
 
   if (fieldNames->size() < 1) {
     cerr << "ERROR - PolarManager::_setupDisplayFields()" << endl;
     cerr << "  No fields found" << endl;
     return -1;
   }
-  //selectedFieldChanged(QString().fromStdString(fieldNames->at(0)));
+
+  _displayFieldController->setSelectedField(0);
+
 
   return 0;
 
@@ -5706,6 +4949,8 @@ void PolarManager::_scriptEditorSetup() {
   try {
     EditRunScript();
   } catch (const string& ex) {
+    errorMessage("EditRunScript Error", ex);
+  } catch (const char* ex) {
     errorMessage("EditRunScript Error", ex);
   }  
   LOG(DEBUG) << "exit";  
@@ -5734,7 +4979,19 @@ void PolarManager::EditRunScript() {
     connect(scriptEditorView, SIGNAL(scriptEditorClosed()), this, SLOT(scriptEditorClosed()));
     //connect scriptEditorView, SIGNAL(runForEachRayScript(), 
     //  this, SLOT(runForEachRayScript()));
-    
+    connect(scriptEditorView, SIGNAL(cancelScriptRunRequest()),
+      this, SLOT(cancelScriptRun()));
+    connect(scriptEditorView, &ScriptEditorView::runScriptBatchMode,
+      this, &PolarManager::runScriptBatchMode);
+    // do not need this; all scripts are run through batch mode,
+    // by specifying the useTimeRange = true for batch; false for individual scan
+    //connect(scriptEditorView, &ScriptEditorView::runForEachRayScript,
+    //  this, &PolarManager::runForEachRayScript);   
+    connect(scriptEditorView, &ScriptEditorView::undoScriptEdits,
+      this, &PolarManager::undoScriptEdits); 
+    connect(scriptEditorView, &ScriptEditorView::redoScriptEdits,
+      this, &PolarManager::redoScriptEdits); 
+
     scriptEditorView->init();
   }
   scriptEditorView->show();
@@ -5742,12 +4999,277 @@ void PolarManager::EditRunScript() {
   LOG(DEBUG) << "exit";
 }
 
-void PolarManager::runForEachRayScript(QString script, bool useBoundary) {
+void PolarManager::runForEachRayScript(QString script, bool useBoundary, bool useAllSweeps) {
   vector<Point> boundaryPoints;
   if (boundaryPointEditorControl != NULL) {
     boundaryPoints = boundaryPointEditorControl->getWorldPoints();
   }
-  scriptEditorControl->runForEachRayScript(script, useBoundary, boundaryPoints);
+  if (useAllSweeps) {
+    scriptEditorControl->runForEachRayScript(script, useBoundary, boundaryPoints);
+  } else {
+    // send the current sweep to the script editor controller
+    int currentSweepIndex = _sweepController->getSelectedNumber();
+    currentSweepIndex -= 1; // since GUI is 1-based and Volume sweep 
+    // index is a vector and zero-based 
+    scriptEditorControl->runForEachRayScript(script, currentSweepIndex,
+     useBoundary, boundaryPoints);
+  }
+}
+
+
+// Q: if running without GUI, how to get the field names? from the command line?
+// from the parameter file? YES, and the command line takes precedence.
+// From the way the saveDirectoryPath is chosen, the path must exist.
+// TODO: when running from the command line, verify the directory exists.
+
+// useTimeRange distinquishes individual vs. batch mode
+void PolarManager::runScriptBatchMode(QString script, bool useBoundary, 
+  bool useAllSweeps, bool useTimeRange) {
+
+  /*
+  // save to temporary directory .tmp_N in the same directory 
+  // as the current archive files.
+  string saveDirectoryPath;
+  try {
+    saveDirectoryPath = _timeNavController->getTempDir(); 
+  } catch (std::invalid_argument &ex) {
+    errorMessage("Error", ex.what());
+    return;
+  }
+*/
+  _cancelled = false;
+   
+  vector<Point> boundaryPoints;
+  if (boundaryPointEditorControl != NULL) {
+    boundaryPoints = boundaryPointEditorControl->getWorldPoints();
+  }
+
+  // get the field names
+  vector<string> fieldNames = _displayFieldController->getFieldNames();
+  if (fieldNames.size() <= 0) {
+    errorMessage("Error", "No field names selected");
+    return;
+  }
+  string fileName;
+  string currentPath;
+  int firstArchiveFileIndex;
+  int lastArchiveFileIndex;
+  _timeNavController->getBounds(useTimeRange, &firstArchiveFileIndex,
+    &lastArchiveFileIndex);
+
+  try {
+    // get list of archive files within start and end date/times
+    // make a local version of the time navigation to manage the archive files
+    // NO!!!
+    //
+    // Q: or I could use the timeNavController as a progress bar
+    // indicating which file is in progress? YES!
+    //string inputPath = "";  //_timeNavController->getPath();
+    //TimeNavController myTimeNavController = new TimeNavController();
+    // vector<string> archiveFiles = _timeNavController->getArchiveFileList(
+    //  inputPath,
+    //  startYear, startMonth, startDay, startHour, startMinute, startSecond,
+    //  endYear, endMonth, endDay, endHour, endMinute, endSecond);
+      //startDateTime, endDateTime);
+
+// ---
+
+     // move time nav through each archive file
+     // run script on each file.
+     // run in automatic mode.  
+     // then for command-line mode, we just run the same code?? Yes, ideally.
+
+  // for each archive file 
+  //vector<string>::iterator it;
+  //for (it = archiveFiles.begin(); it != archiveFiles.end(); ++it) {
+  int archiveFileIndex = firstArchiveFileIndex;
+
+  _timeNavController->setTimeSliderPosition(archiveFileIndex);
+  //bool cancelled = scriptEditorControl->cancelRequested();
+  while (archiveFileIndex <= lastArchiveFileIndex && !_cancelled) {
+    
+    // need to get the current version of the file (by index)
+    string inputPath = _getSelectedFile();
+    //  _undoRedoController->getCurrentVersion(archiveFileIndex);
+    _getArchiveDataPlainVanilla(inputPath);
+
+    //bool debug_verbose = false;
+    //bool debug_extra = false;
+    bool batchMode = true; // to prevent message box on every file
+    try {  
+      // use regular forEachRay ...
+      runForEachRayScript(script, useBoundary, useAllSweeps);
+      // check if Cancel requested
+      //   save archive file to temp area
+      //LOG(DEBUG) << "writing to file " << name;
+      DataModel *dataModel = DataModel::Instance();
+      string nextVersionPath = _getFileNewVersion(archiveFileIndex);
+        // _undoRedoController->getNewVersion(archiveFileIndex);
+
+//      currentPath = saveDirectoryPath;
+//      currentPath.append("/");
+//      fileName = _timeNavController->getSelectedArchiveFileName();
+//      currentPath.append(fileName);
+      dataModel->writeData(nextVersionPath);
+      //_unSavedEdits = false;
+    
+    } catch (FileIException &ex) {
+      errorMessage("Error", "FileIException");
+      //this->setCursor(Qt::ArrowCursor);
+      return;
+    } catch (std::invalid_argument &ex) {
+      errorMessage("Error", ex.what());
+      return;
+    }
+    archiveFileIndex += 1;
+    _timeNavController->setTimeSliderPosition(archiveFileIndex);
+    //cancelled = scriptEditorControl->cancelRequested();
+  }
+
+// ---
+
+  // TODO: if not cancelled
+  //   move to temporary directory with the new edits
+
+
+
+  /*
+    if (useAllSweeps) {
+      scriptEditorControl->runForEachRayScript(script, useBoundary, boundaryPoints);
+    } else {
+      // send the current sweep to the script editor controller
+      int currentSweepIndex = _sweepController->getSelectedNumber();
+      currentSweepIndex -= 1; // since GUI is 1-based and Volume sweep 
+      // index is a vector and zero-based 
+      scriptEditorControl->runForEachRayScript(script, currentSweepIndex,
+       useBoundary, boundaryPoints);
+    }
+    */
+
+    _undoRedoController->waterMarkVersion();
+  } catch (std::invalid_argument &ex) {
+    errorMessage("Error", ex.what());
+  }
+  _cancelled = false;
+  //errorMessage("Done", "moving to edited data");
+  //vector<string> archiveFileList;
+  //archiveFileList.push_back(currentPath);
+  //bool fromCommandLine = false;
+  //setArchiveFileList(archiveFileList, fromCommandLine);
+  //_timeNavController->setSliderPosition();
+  //_timeNavController->fetchArchiveFiles(saveDirectoryPath, fileName);
+}
+
+void PolarManager::undoScriptEdits() { 
+  bool batchMode = false;
+  /*
+  // we can undo the edits, if the current directory is ./tmp_N where
+  // N = 1 ... 9
+
+  // check the current directory 
+  if (_timeNavController->isSelectedFileInTempDir()) {
+    string previousTempDir = _timeNavController->getPreviousTempDir();
+    if (previousTempDir.size() > 0) {
+      //errorMessage("Done", "undoing previous data edits");
+      string currentFileName = _timeNavController->getSelectedArchiveFileName();
+      //vector<string> archiveFileList;
+      //archiveFileList.push_back(previousTempDir + "/" + currentFileName);
+      bool keepTimeRange = true;
+      string fullUrl = previousTempDir + "/" + currentFileName;
+      _timeNavController->fetchArchiveFiles(previousTempDir,
+        currentFileName, fullUrl, keepTimeRange);
+      _timeNavController->setSliderPosition();
+      // keep the time range the same, so grab the time range,
+      // then call fetchArchiveFiles ...
+      //bool fromCommandLine = false;
+      //setArchiveFileList(archiveFileList, fromCommandLine);  
+      } else {
+        errorMessage("Error", "At the end of Undo stack");
+      }
+  }
+  */
+
+  // need to get the current version of the selected file (by index)
+  int selectedArchiveFileIndex = 
+    _timeNavController->getSelectedArchiveFileIndex();
+  if (batchMode) {
+    try {
+    // _undoRedoController->undoBatchMode();
+    } catch (std::invalid_argument &ex) {
+      errorMessage("Error", ex.what());
+      return;
+    }
+  } 
+  //string inputPath = 
+    _undoRedoController->getPreviousVersion(selectedArchiveFileIndex);
+  string inputPath = _getSelectedFile();
+  /*bool havePreviousVersion = inputPath.size() > 0;
+  if (havePreviousVersion) {
+    ;
+  } else {
+    // use the original version
+    // undo just moves index
+     use get CurrentVersion?  HERE !!! 
+    //errorMessage("Error", "At the end of Undo stack");
+  }
+  */
+  _readDataFile2(inputPath);
+  _plotArchiveData();
+}
+
+void PolarManager::redoScriptEdits() { 
+  bool batchMode = false;
+
+  // need to get the current version of the selected file (by index)
+  int selectedArchiveFileIndex = 
+    _timeNavController->getSelectedArchiveFileIndex();
+  if (batchMode) {
+    try {
+      //_undoRedoController->redoBatchMode();
+    } catch (std::invalid_argument &ex) {
+      errorMessage("Error", ex.what());
+      return;
+    }
+  }
+  //string inputPath = 
+    _undoRedoController->getNextVersion(selectedArchiveFileIndex);
+    string inputPath = _getSelectedFile();
+  /*bool haveNextVersion = inputPath.size() > 0;
+  if (haveNextVersion) {
+    _readDataFile2(inputPath);
+    _plotArchiveData();
+  } else {
+    errorMessage("Error", "At the end of Undo stack");
+  }
+  */
+  _readDataFile2(inputPath);
+  _plotArchiveData();
+  /*  
+  // we can redo the edits, if the current directory is ./tmp_N where
+  // N = 1 ... 9
+
+  // check the current directory 
+  if (_timeNavController->isSelectedFileInTempDir()) {
+    string nextTempDir = _timeNavController->getNextTempDir();
+    if (nextTempDir.size() > 0) {
+      //errorMessage("Done", "redoing data edits");
+      string currentFileName = _timeNavController->getSelectedArchiveFileName();
+      //vector<string> archiveFileList;
+      //archiveFileList.push_back(previousTempDir + "/" + currentFileName);
+      bool keepTimeRange = true;
+      string fullUrl = nextTempDir + "/" + currentFileName;
+      _timeNavController->fetchArchiveFiles(nextTempDir,
+        currentFileName, fullUrl, keepTimeRange);
+      _timeNavController->setSliderPosition();
+      // keep the time range the same, so grab the time range,
+      // then call fetchArchiveFiles ...
+      //bool fromCommandLine = false;
+      //setArchiveFileList(archiveFileList, fromCommandLine);  
+      } else {
+        errorMessage("Error", "At the end of Redo stack");
+      }
+  }
+  */
 }
 
 void PolarManager::_examineSpreadSheetSetup(double  closestAz, double range)
@@ -5790,53 +5312,21 @@ void PolarManager::ExamineEdit(double azimuth, double elevation, size_t fieldInd
   // TODO: replace with ...
   const RadxRay *closestRayToEdit = _rayLocationController->getClosestRay(azimuth);
 
-/*
-  vector<RadxRay *> rays = _vol->getRays();
-  // find that ray
-  bool foundIt = false;
-  double minDiff = 1.0e99;
-  double delta = 0.01;
-  RadxRay *closestRayToEdit = NULL;
-  vector<RadxRay *>::iterator r;
-  r=rays.begin();
-  int idx = 0;
-  while(r<rays.end()) {
-    RadxRay *rayr = *r;
-    double diff = fabs(azimuth - rayr->getAzimuthDeg());
-    if (diff > 180.0) {
-      diff = fabs(diff - 360.0);
-    }
-    if (diff < minDiff) {
-      if (abs(elevation - rayr->getElevationDeg()) <= delta) {
-        foundIt = true;
-        closestRayToEdit = *r;
-        minDiff = diff;
-      }
-    }
-    r += 1;
-    idx += 1;
-  }  
-  if (!foundIt || closestRayToEdit == NULL) {
-    //throw "couldn't find closest ray";
-    errorMessage("ExamineEdit Error", "couldn't find closest ray");
-    return;
-  }
-  */
-
   LOG(DEBUG) << "Found closest ray: pointer = " << closestRayToEdit;
-  closestRayToEdit->print(cout); 
+  //closestRayToEdit->print(cout); 
 
 
   // create the view
   //SpreadSheetView *sheetView;
   if (sheetView == NULL) {
-    sheetView = new SpreadSheetView(this, closestRayToEdit->getAzimuthDeg());
+    sheetView = new SpreadSheetView(this, closestRayToEdit->getAzimuthDeg(),
+      _sweepController->getSelectedAngle());
 
     // install event filter to catch when the spreadsheet is closed
     CloseEventFilter *closeFilter = new CloseEventFilter(sheetView);
     sheetView->installEventFilter(closeFilter);
 
-    sheetView->newElevation(elevation);
+
     // create the model
 
     // SpreadSheetModel *model = new SpreadSheetModel(closestRayCopy);
@@ -5853,20 +5343,43 @@ void PolarManager::ExamineEdit(double azimuth, double elevation, size_t fieldInd
     // connect some signals and slots in order to retrieve information
     // and send changes back to display
                                                                            
-    connect(spreadSheetControl, SIGNAL(volumeChanged()),
+    connect(sheetView, SIGNAL(replotRequested()),
         this, SLOT(setVolume()));
     connect(sheetView, SIGNAL(spreadSheetClosed()), this, SLOT(spreadSheetClosed()));
-    
+    connect(sheetView, SIGNAL(setDataMissing(string, float)), 
+      this, SLOT(setDataMissing(string, float)));    
+//HERE ==> do i update the controller, which will update the model, then the view?
+//Yes, always go through the controller, never directly to the view!!
+//    spreadSheetControl->newElevation(elevation);
+
+    connect(sheetView, SIGNAL(dataChanged()), 
+      this, SLOT(spreadsheetDataChanged()));
+
     sheetView->init();
     sheetView->show();
   } else {
+    string currentFieldName = _displayFieldController->getSelectedFieldName();
     //spreadSheetControl->switchRay(closestRayToEdit->getAzimuthDeg(), elevation);
     float azimuth = closestRayToEdit->getAzimuthDeg();
-    sheetView->changeAzEl(closestRayToEdit->getAzimuthDeg(), elevation);
-    string currentFieldName = _displayFieldController->getSelectedFieldName();
-    sheetView->highlightClickedData(currentFieldName, azimuth, (float) range);
+    float elevation = _sweepController->getSelectedAngle();
+    spreadSheetControl->moveToLocation(currentFieldName, elevation,
+      azimuth, range);
+    //spreadSheetControl->changeAzEl(closestRayToEdit->getAzimuthDeg(), elevation);   
+    // should be called withing Controller ... 
+
+    //spreadSheetControl->highlightClickedData(currentFieldName, azimuth, (float) range);
   }
   
+}
+
+void PolarManager::cancelScriptRun() {
+  _cancelled = true;
+  errorMessage("Information", "Cancelling running script");
+}
+
+void PolarManager::setDataMissing(string fieldName, float missingValue) {
+  spreadSheetControl->setDataMissing(fieldName, missingValue);
+  _applyDataEdits();
 }
 
 void PolarManager::spreadSheetClosed() {
@@ -5887,6 +5400,78 @@ void PolarManager::boundaryEditorClosed() {
   delete boundaryView;
   boundaryView = NULL;
 }
+
+void PolarManager::closeEvent(QEvent *event)
+{
+    if (_unSavedEdits) {
+        string msg = "Unsaved changes to the data. \n";
+        msg.append("Use File->Save before closing to avoid this message. \n");
+        msg.append("Do you want to save these changes?");
+
+        QMessageBox::StandardButton reply =
+            QMessageBox::warning(this, "QMessageBox::warning()",
+                          QString::fromStdString(msg),
+                          QMessageBox::Save | QMessageBox::Discard);
+  
+        //  QMessageBox::Abort | QMessageBox::Retry | QMessageBox::Ignore);
+        if (reply == QMessageBox::Save) {
+            LOG(DEBUG) << "Save";
+            _saveFile();
+            _unSavedEdits = false;
+        }
+
+    }  
+    event->accept();
+    //emit close();
+
+}
+
+
+/* use the default QWidget::close() slot
+   which first sends the widget a QCloseEvent. 
+   If the widget has the Qt::WA_DeleteOnClose flag, 
+   the widget is also deleted. 
+   A close event is delivered to the widget no matter
+  if the widget is visible or not.
+
+void PolarManager::close(QEvent *event) {
+
+cerr << "PolarManager::close() called" << endl;
+  event->accept();
+
+  QMainWindow::closeEvent(event);
+  if (_ppi) {
+    delete _ppi;
+  }
+
+  if (_rhi) {
+    delete _rhi;
+  }
+
+  //if (_ppiRays) {
+  //  delete[] _ppiRays;
+  //}
+  // TODO: delete all controllers
+  if (_timeNavController) {
+    //_timeNavController->~TimeNavController();
+    delete _timeNavController;
+  }
+  // if (_timeNavView) delete _timeNavView;
+
+}
+*/
+
+/* TODO: save state ... 
+
+void MyMainWindow::closeEvent(QCloseEvent *event)
+{
+    QSettings settings("MyCompany", "MyApp");
+    settings.setValue("geometry", saveGeometry());
+    settings.setValue("windowState", saveState());
+    QMainWindow::closeEvent(event);
+}
+*/
+
 
 /////////////////////////////////////////////////////
 // howto help
@@ -5946,5 +5531,30 @@ void PolarManager::_about()
 
 void PolarManager::errorMessage(string title, string message) {
   QMessageBox::information(this, QString::fromStdString(title), QString::fromStdString(message));
+}
+
+int PolarManager::saveDiscardMessage(string text, string question) {
+  QMessageBox msgBox(this);
+  msgBox.setText(QString::fromStdString(text)); // "The document has been modified.");
+  msgBox.setInformativeText(QString::fromStdString(question)); // "Do you want to save your changes?");
+  msgBox.setStandardButtons(QMessageBox::Discard | 
+    QMessageBox::Cancel);
+
+  QPushButton *saveNewDirectoryButton = msgBox.addButton(tr("Save to new directory"), QMessageBox::YesRole);
+  QPushButton *overwriteOriginalButton = msgBox.addButton(tr("Overwrite original"), QMessageBox::ApplyRole);
+
+  msgBox.setDefaultButton(QMessageBox::Cancel);
+
+  int ret = msgBox.exec();
+
+  if (msgBox.clickedButton() == saveNewDirectoryButton) {
+      return QMessageBox::Save;
+  } else if (msgBox.clickedButton() == overwriteOriginalButton) {
+      return QMessageBox::Apply;
+  } else {
+    return ret;
+  }
+
+  //return ret;
 }
 

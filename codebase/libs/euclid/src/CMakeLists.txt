@@ -141,6 +141,7 @@ set (SRCS
       ./Pjg/PjgCalc.cc
       ./Pjg/PjgFlatCalc.cc
       ./Pjg/PjgGrib.cc
+      ./Pjg/PjgGridGeom.cc
       ./Pjg/PjgLambertAzimMath.cc
       ./Pjg/PjgLambertConfMath.cc
       ./Pjg/PjgLatlonCalc.cc
@@ -240,7 +241,9 @@ set (SRCS
       ./clump/translate_intervals.c
       ./clump/union_intervals.c
       ./clump/zero_clump.c
-      ./clump/GridClumping.cc
+      ./clump/ClumpingDualThresh.cc
+      ./clump/ClumpingMgr.cc
+      ./clump/ClumpProps.cc
       ./geometry/coord_system.c
       ./geometry/convex_hull.c
       ./geometry/create_box.c

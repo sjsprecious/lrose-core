@@ -37,6 +37,8 @@ class BoundaryPointEditor : public QObject
 	  BoundaryView *boundaryView);
   ~BoundaryPointEditor();
 
+  void makeConnections();
+
   //void createBoundaryEditorDialog();	
 
 	string getBoundaryFilePath(string &fieldName, int sweepIndex, string boundaryFileName);
@@ -45,9 +47,11 @@ class BoundaryPointEditor : public QObject
 	//string getRootBoundaryDir();
 	void setBoundaryDir(string &openFilePath);
 
-  bool evaluatePoint(int worldX, int worldY);
+  bool isOverBoundaryPoint(int worldX, int worldY);
   bool evaluateCursor(bool isShiftKeyDown);
-  void evaluateMouseRelease(int mouseReleaseX, int mouseReleaseY, bool isShiftKeyDown);
+  bool evaluatePoint(int worldReleaseX, int worldReleaseY);
+  void addDeleteBoundaryPoint(int mouseReleaseX, int mouseReleaseY, bool isShiftKeyDown);
+  bool moveBoundaryPoint(int startX, int startY, int worldX, int worldY);
 	static BoundaryPointEditor* Instance();
 	void makeCircle(int x, int y, float radius);
 	void addToBrushShape(float x, float y);
@@ -74,9 +78,12 @@ class BoundaryPointEditor : public QObject
 	bool setCircleRadius(int value);
 	void setBrushRadius(int value);
 	void setWorldScale(float value);
+  void setBoundaryColor(string &newColor);
+  string getBoundaryColor();
+
 	bool getIsCircle();
-	//int getCircleRadius();
-	//int getBrushRadius();
+	int getCircleRadius();
+	int getBrushRadius();
 	void showBoundaryEditor();
 	//void refreshBoundaries();
 	//const char *refreshBoundary(int i);
@@ -89,7 +96,8 @@ class BoundaryPointEditor : public QObject
   void boundaryBrushRadiusChanged(int value);
   void saveBoundary(int boundaryIndex);
   void loadBoundary(int boundaryIndex);
-
+  void clearBoundaryClicked();
+  
   public slots:
 
   //void selectedFieldNameSweepIndexSent(int boundaryIndex, QString &selectedFieldName, int sweepIndex);
@@ -97,10 +105,12 @@ class BoundaryPointEditor : public QObject
 	void userClickedPolygonButton();
 	void userClickedCircleButton();
 	void userClickedBrushButton();
+	void boundaryColorChanged(QColor newColor);
 
   private:
 
 	vector<Point> getPoints(string boundaryFilePath);
+	void updateBoundaryColor(string colorName);
 
 
 	//int getNearestPointIndex(float x, float y, vector<Point> &pts);

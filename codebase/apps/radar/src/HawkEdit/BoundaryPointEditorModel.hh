@@ -32,8 +32,8 @@ class BoundaryPointEditorModel
   vector<Point> getBoundaryPoints(string radarFilePath,
     string &fieldName, int sweepIndex, int boundaryIndex);	
 
-  void evaluateMouseRelease(int worldX, int worldY, bool isShiftKeyDown);
-  bool evaluatePoint(int worldX, int worldY);
+  void addDeleteBoundaryPoint(int worldX, int worldY, bool isShiftKeyDown);
+  bool moveBoundaryPoint(int startX, int startY, int worldX, int worldY);
 	void makeCircle(int x, int y, float radius);
 	void addToBrushShape(float x, float y);
 	void addPoint(float x, float y);
@@ -60,7 +60,11 @@ class BoundaryPointEditorModel
 	bool getIsCircle();
 	int getCircleRadius();
 	int getBrushRadius();
+
 	string &getYellowBrush() { return yellowBrush; };
+	string &getBoundaryColor() { return currentBrushColor; };
+	void setBoundaryColor(string &newBrushColor) { currentBrushColor = newBrushColor; };
+  
 	float getPointBoxScale() { return pointBoxScale; };
 
 	const char *refreshBoundary(string &radarFilePath,
@@ -72,6 +76,8 @@ class BoundaryPointEditorModel
 
 
   void save(string &path);
+  bool loadBoundaryColor(string path);
+  void saveBoundaryColor(string path);
   string getBoundaryFilePath(string &radarFilePath, string &fieldName,
    int sweepIndex, int boundaryIndex);
   string getBoundaryFileName(string &fieldName, 
@@ -83,6 +89,7 @@ class BoundaryPointEditorModel
   string getBoundaryName(int i);	
 
 	string rootBoundaryDir; //  = string(getenv("HOME")) + "/" + "HawkEyeBoundaries";
+	string boundaryColorExtension = string("_color.txt");
 	
 	int getNearestPointIndex(float x, float y, vector<Point> &pts);
 	float getNearestDistToLineSegment(int x, int y, int segmentPtIndex1, int segmentPtIndex2);
@@ -104,7 +111,7 @@ class BoundaryPointEditorModel
 	const float TwoPI = 6.283185;
 	float worldScale;
 	float CLOSE_DISTANCE = 10;
-	float pointBoxScale = 1;
+	float pointBoxScale = 3;
 	Point circleOrigin;
 	int circleRadius = 50;
 	int brushRadius = 20;
@@ -112,12 +119,13 @@ class BoundaryPointEditorModel
 	Point brushLastOrigin;
 
 	string yellowBrush = "yellow";
+	string currentBrushColor = "yellow";
 
 	void coutMemUsage();
 	vector<Point> points;
 	vector<Point> mergePoints;
 
-	BoundaryToolType currentTool = BoundaryToolType::brush;
+	BoundaryToolType currentTool; //  = BoundaryToolType::polygon;
 
 	void ReadFromFile(vector<Point> &x, const string &file_name);
 
